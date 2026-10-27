@@ -1,0 +1,87 @@
+services:
+  ros:
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.ros
+    container_name: ros
+    environment:
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
+    volumes:
+      - ./ros_ws:/ros_ws
+    command: bash -c "source /opt/ros/jazzy/setup.bash && tail -f /dev/null"
+    network_mode: host
+    ipc: host
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  gazebo:
+    image: osrf/ros:jazzy-desktop-full
+    container_name: gazebo
+    environment:
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
+      - DISPLAY=${DISPLAY:-:0}
+      - QT_QPA_PLATFORM=xcb
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ./gazebo:/gazebo
+    command: >
+      bash -c "source /opt/ros/jazzy/setup.bash &&
+      gz sim -s -r /gazebo/warehouse.sdf &
+      ros2 run ros_gz_bridge parameter_bridge
+      /cmd_vel@geometry_msgs/msg/Twist@gz.msgs.Twist
+      /odom@nav_msgs/msg/Odometry@gz.msgs.Odometry
+      /joint_states@sensor_msgs/msg/JointState@gz.msgs.Model
+      && wait"
+    network_mode: host
+    ipc: host
+
+  rosbridge:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.ros
+    container_name: rosbridge
+    environment:
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
+    command: bash -c "source /opt/ros/jazzy/setup.bash && ros2 launch rosbridge_server rosbridge_websocket_launch.xml"
+    network_mode: host
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  orchestrator:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.orchestrator
+    container_name: orchestrator
+    environment:
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
+    network_mode: host
+    ipc: host
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.web
+    container_name: web
+    ports:
+      - "8080:80"
+    networks: [fleet]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  fleet:
+    driver: bridge

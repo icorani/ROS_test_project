@@ -1,0 +1,10 @@
+FROM ros:jazzy
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ros-jazzy-rosbridge-server \
+    ros-jazzy-ros-gz \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /ros_ws
+COPY ros_ws /ros_ws
+RUN . /opt/ros/jazzy/setup.sh && colcon build 2>/dev/null || true
+CMD ["bash", "-c", "source /opt/ros/jazzy/setup.bash && tail -f /dev/null"]
