@@ -13,5 +13,5 @@ RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
 
 COPY orchestrator /app
 
-EXPOSE 9000
-CMD ["bash", "-c", "source /opt/ros/jazzy/setup.bash && uvicorn main:app --host 0.0.0.0 --port 9000"]
+EXPOSE ${ORCHESTRATOR_PORT:-8191}
+CMD ["bash", "-c", "source /opt/ros/jazzy/setup.bash && uvicorn main:app --host 0.0.0.0 --port ${ORCHESTRATOR_PORT:-8191}"]

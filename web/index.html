@@ -116,7 +116,8 @@ let robots = [];
 let ws;
 
 function connect() {
-  ws = new WebSocket('ws://localhost:9000/ws');
+  const orchestratorPort = window.location.port ? (parseInt(window.location.port, 10) + 1) : 8191;
+ws = new WebSocket(`ws://${window.location.hostname}:${orchestratorPort}/ws`);
 
   ws.onopen = () => {
     statusEl.textContent = 'connected';

@@ -45,7 +45,10 @@ services:
     container_name: rosbridge
     environment:
       - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
-    command: bash -c "source /opt/ros/jazzy/setup.bash && ros2 launch rosbridge_server rosbridge_websocket_launch.xml"
+      - ROSBRIDGE_PORT=${ROSBRIDGE_PORT:-8192}
+    command: >
+      bash -c "source /opt/ros/jazzy/setup.bash &&
+      ros2 launch rosbridge_server rosbridge_websocket_launch.xml port:=${ROSBRIDGE_PORT:-8192}"
     network_mode: host
     logging:
       driver: json-file
@@ -60,6 +63,8 @@ services:
     container_name: orchestrator
     environment:
       - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
+      - ORCHESTRATOR_PORT=${ORCHESTRATOR_PORT:-8191}
+    command: bash -c "source /opt/ros/jazzy/setup.bash && uvicorn main:app --host 0.0.0.0 --port ${ORCHESTRATOR_PORT:-8191}"
     network_mode: host
     ipc: host
     logging:
@@ -74,7 +79,7 @@ services:
       dockerfile: docker/Dockerfile.web
     container_name: web
     ports:
-      - "8080:80"
+      - "${WEB_PORT:-8190}:80"
     networks: [fleet]
     logging:
       driver: json-file
