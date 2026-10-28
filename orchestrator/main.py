@@ -24,14 +24,16 @@ PARKING = CFG.get("parking", {})
 EDGES = CFG["edges"]
 BOUNDS = CFG["bounds"]
 
-# Граф: adjacency list
-ADJ = {n: [] for n in NODES}
-for a, b in EDGES:
-    ADJ[a].append(b)
-    ADJ[b].append(a)
-
-# Позиции узлов (включая парковки)
+# Все узлы (включая парковки)
+ALL_NODES = {**NODES, **PARKING}
 POS = {**NODES, **PARKING}
+
+# Граф: adjacency list (включая парковки)
+ADJ = {n: [] for n in ALL_NODES}
+for a, b in EDGES:
+    if a in ADJ and b in ADJ:
+        ADJ[a].append(b)
+        ADJ[b].append(a)
 
 # ── Dijkstra ──────────────────────────────────────────
 def find_path(start: str, goal: str) -> list[str] | None:
@@ -47,7 +49,6 @@ def find_path(start: str, goal: str) -> list[str] | None:
         if d > dist.get(u, float("inf")):
             continue
         for v in ADJ.get(u, []):
-            # вес = евклидово расстояние
             w = math.dist((POS[u]["x"], POS[u]["y"]), (POS[v]["x"], POS[v]["y"]))
             nd = d + w
             if nd < dist.get(v, float("inf")):
@@ -99,7 +100,6 @@ async def spin(node):
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
     await ws.accept()
-    # Сначала шлём карту
     await ws.send_text(json.dumps({"type": "map", "data": {
         "name": CFG["name"],
         "bounds": BOUNDS,
