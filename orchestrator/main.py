@@ -35,6 +35,10 @@ for a, b in EDGES:
         ADJ[a].append(b)
         ADJ[b].append(a)
 
+# ── Смещение старта (из .env) ─────────────────────────
+START_X = float(os.getenv("ROBOT_START_X", "0"))
+START_Y = float(os.getenv("ROBOT_START_Y", "0"))
+
 # ── Dijkstra ──────────────────────────────────────────
 def find_path(start: str, goal: str) -> list[str] | None:
     if start not in POS or goal not in POS:
@@ -79,8 +83,8 @@ class OdomListener(Node):
         self.create_subscription(Odometry, "/odom", self.cb, 10)
 
     def cb(self, msg):
-        robot_state["x"] = msg.pose.pose.position.x
-        robot_state["y"] = msg.pose.pose.position.y
+        robot_state["x"] = msg.pose.pose.position.x + START_X
+        robot_state["y"] = msg.pose.pose.position.y + START_Y
         q = msg.pose.pose.orientation
         siny = 2.0 * (q.w * q.z + q.x * q.y)
         cosy = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
