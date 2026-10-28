@@ -15,6 +15,12 @@ x_min, x_max = b["x_min"], b["x_max"]
 y_min, y_max = b["y_min"], b["y_max"]
 t = b.get("wall_thickness", 0.2)
 
+NODES = cfg["nodes"]
+PARKING = cfg.get("parking", {})
+EDGES = cfg["edges"]
+ALL_NODES = {**NODES, **PARKING}
+
+
 def wall_box(name, x, y, w, h, z=0.5, height=1.0):
     return f"""
     <model name="{name}">
@@ -27,15 +33,44 @@ def wall_box(name, x, y, w, h, z=0.5, height=1.0):
       </link>
     </model>"""
 
-walls = [
-    wall_box("wall_bottom", (x_min+x_max)/2, y_min, x_max-x_min, t),
-    wall_box("wall_top",    (x_min+x_max)/2, y_max, x_max-x_min, t),
-    wall_box("wall_left",   x_min, (y_min+y_max)/2, t, y_max-y_min),
-    wall_box("wall_right",  x_max, (y_min+y_max)/2, t, y_max-y_min),
-]
+
+def inner_walls(nodes, edges, thickness=0.2):
+    """Стены там, где нет рёбер между соседними узлами."""
+    edge_set = set()
+    for a, b in edges:
+        edge_set.add((a, b))
+        edge_set.add((b, a))
+
+    walls = []
+    node_ids = list(nodes.keys())
+
+    for i, a in enumerate(node_ids):
+        for b in node_ids[i + 1:]:
+            ax, ay = nodes[a]["x"], nodes[a]["y"]
+            bx, by = nodes[b]["x"], nodes[b]["y"]
+            dx = abs(ax - bx)
+            dy = abs(ay - by)
+
+            # Горизонтальные соседи (dy ≈ 0, dx ≈ 2)
+            if dy < 0.1 and 1.5 < dx < 2.5:
+                if (a, b) not in edge_set:
+                    mx = (ax + bx) / 2
+                    my = ay
+                    walls.append(wall_box(
+                        f"inner_v_{a}_{b}", mx, my, thickness, 2.0, z=0.5, height=1.0))
+
+            # Вертикальные соседи (dx ≈ 0, dy ≈ 2)
+            elif dx < 0.1 and 1.5 < dy < 2.5:
+                if (a, b) not in edge_set:
+                    mx = ax
+                    my = (ay + by) / 2
+                    walls.append(wall_box(
+                        f"inner_h_{a}_{b}", mx, my, 2.0, thickness, z=0.5, height=1.0))
+
+    return walls
+
 
 def robot_model(robot_id, start_x, start_y, start_yaw):
-    """Генерирует модель робота с уникальными топиками."""
     return f"""
     <model name="turtle_{robot_id}">
       <pose>{start_x} {start_y} 0.1 0 0 {start_yaw}</pose>
@@ -106,6 +141,19 @@ def robot_model(robot_id, start_x, start_y, start_yaw):
       </plugin>
     </model>"""
 
+
+# Внешние стены (периметр)
+walls = [
+    wall_box("wall_bottom", (x_min + x_max) / 2, y_min, x_max - x_min, t),
+    wall_box("wall_top",    (x_min + x_max) / 2, y_max, x_max - x_min, t),
+    wall_box("wall_left",   x_min, (y_min + y_max) / 2, t, y_max - y_min),
+    wall_box("wall_right",  x_max, (y_min + y_max) / 2, t, y_max - y_min),
+]
+
+# Внутренние стены (там, где нет рёбер)
+walls += inner_walls(ALL_NODES, EDGES, t)
+
+# Роботы
 robots_sdf = ""
 for robot_id, r in cfg.get("robots", {}).items():
     robots_sdf += robot_model(
@@ -146,4 +194,44 @@ sdf = f"""<?xml version="1.0"?>
 os.makedirs("gazebo", exist_ok=True)
 with open(OUT_PATH, "w") as f:
     f.write(sdf)
-print(f"Generated {OUT_PATH} with {len(cfg.get('robots', {}))} robots")
+
+n_inner = len(inner_walls(ALL_NODES, EDGES, t))
+print(f"Generated {OUT_PATH} with {len(cfg.get('robots', {}))} robots and {n_inner} inner walls")
+
+import json
+
+# Собираем список стен (внешние + внутренние) в формате для Canvas
+walls_json = []
+# Внешние (периметр)
+walls_json.append({"x1": x_min, "y1": y_min, "x2": x_max, "y2": y_min})
+walls_json.append({"x1": x_min, "y1": y_max, "x2": x_max, "y2": y_max})
+walls_json.append({"x1": x_min, "y1": y_min, "x2": x_min, "y2": y_max})
+walls_json.append({"x1": x_max, "y1": y_min, "x2": x_max, "y2": y_max})
+
+# Внутренние — из inner_walls, но нам нужны координаты, а не SDF.
+# Пересчитываем (та же логика, но без SDF)
+edge_set = set()
+for a, b in EDGES:
+    edge_set.add((a, b))
+    edge_set.add((b, a))
+node_ids = list(ALL_NODES.keys())
+for i, a in enumerate(node_ids):
+    for b in node_ids[i+1:]:
+        ax, ay = ALL_NODES[a]["x"], ALL_NODES[a]["y"]
+        bx, by = ALL_NODES[b]["x"], ALL_NODES[b]["y"]
+        dx = abs(ax - bx)
+        dy = abs(ay - by)
+        if dy < 0.1 and 1.5 < dx < 2.5:
+            if (a, b) not in edge_set:
+                mx = (ax + bx) / 2
+                walls_json.append({"x1": mx, "y1": ay - 1.0, "x2": mx, "y2": ay + 1.0})
+        elif dx < 0.1 and 1.5 < dy < 2.5:
+            if (a, b) not in edge_set:
+                my = (ay + by) / 2
+                walls_json.append({"x1": ax - 1.0, "y1": my, "x2": ax + 1.0, "y2": my})
+
+os.makedirs("web", exist_ok=True)
+walls_path = f"config_nodes_edges/walls_{MAP_NAME}.json"
+with open(walls_path, "w") as f:
+    json.dump(walls_json, f)
+print(f"Generated {walls_path} with {len(walls_json)} walls")
