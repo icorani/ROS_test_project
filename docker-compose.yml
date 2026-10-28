@@ -64,6 +64,9 @@ services:
     environment:
       - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
       - ORCHESTRATOR_PORT=${ORCHESTRATOR_PORT:-8191}
+      - MAP=${MAP:-simple}
+    volumes:
+      - ./config_nodes_edges:/configs
     command: bash -c "source /opt/ros/jazzy/setup.bash && uvicorn main:app --host 0.0.0.0 --port ${ORCHESTRATOR_PORT:-8191}"
     network_mode: host
     ipc: host
