@@ -98,6 +98,7 @@ class OrchestratorNode(Node):
                     "yaw": data.get("yaw", 0),
                     "status": data.get("status", "idle"),
                     "mission": data.get("mission", []),
+                    "mission_idx": data.get("mission_idx", 0),
                 })
             except Exception as e:
                 self.get_logger().error(f"Bad state from {rid}: {e}")

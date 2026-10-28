@@ -40,6 +40,7 @@
             border-radius: 4px;
             padding: 10px 14px;
             max-height: 40vh;
+            max-width: 90vw;
             overflow-y: auto;
         }
 
@@ -48,9 +49,9 @@
         }
 
         #robot-table th, #robot-table td {
-          padding: 4px 10px;
-          text-align: left;
-          border-bottom: 1px solid #333;
+            padding: 4px 10px;
+            text-align: left;
+            border-bottom: 1px solid #333;
         }
 
         #robot-table th {
@@ -61,6 +62,21 @@
         #robot-table td.status-idle {
             color: #4af;
         }
+
+        #robot-table td.mission {
+            white-space: nowrap;
+            font-size: 13px;
+        }
+
+        #robot-table td.mission .current {
+            font-weight: bold;
+            color: #ff4;
+        }
+
+        #robot-table td.mission .done {
+            color: #4f4;
+        }
+
 
         #robot-table td.status-moving {
             color: #4f4;
@@ -270,15 +286,24 @@
         tbody.innerHTML = '';
         robots.forEach(r => {
             const tr = document.createElement('tr');
-            const mission = r.mission && r.mission.length > 0
-                ? r.mission.slice(0, 3).join('→') + (r.mission.length > 3 ? '…' : '')
-                : '—';
+
+            // Миссия с подсветкой текущего узла
+            let missionHtml = '—';
+            if (r.mission && r.mission.length > 0) {
+                const idx = r.mission_idx || 0;
+                missionHtml = r.mission.map((node, i) => {
+                    if (i < idx) return `<span class="done">${node}</span>`;
+                    if (i === idx) return `<span class="current">${node}</span>`;
+                    return node;
+                }).join(' → ');
+            }
+
             tr.innerHTML = `
       <td>${r.id}</td>
       <td>${r.x.toFixed(2)}</td>
       <td>${r.y.toFixed(2)}</td>
       <td class="status-${r.status}">${r.status}</td>
-      <td>${mission}</td>
+      <td class="mission">${missionHtml}</td>
     `;
             tbody.appendChild(tr);
         });
