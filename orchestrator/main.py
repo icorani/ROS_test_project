@@ -163,6 +163,8 @@ async def ws_endpoint(ws: WebSocket):
                             robots[rid]["mission"] = path
                             robots[rid]["status"] = "moving"
                             node.send_order(rid, path)
+                    else:
+                        robots[rid]["status"] = "idle"
             except asyncio.TimeoutError:
                 pass
             # Отправляем состояния всех роботов

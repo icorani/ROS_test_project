@@ -479,29 +479,35 @@
     setInterval(sendCmd, 50);
 
     function toggleManual(robotId) {
-        // Если уже управляем другим роботом — сначала выходим из него
+        const send = (obj) => {
+            if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+        };
+
+        // Если уже управляем ЭТИМ роботом — выходим
+        if (manualMode && manualRobotId === robotId) {
+            send({type: 'cmd_vel', robot_id: robotId, linear: 0, angular: 0});
+            send({type: 'resume', robot_id: robotId});
+            manualMode = false;
+            manualRobotId = null;
+            keys = {w: false, a: false, s: false, d: false};
+            updateCoords();
+            return;
+        }
+
+        // Если управляем ДРУГИМ роботом — сначала выходим из него
         if (manualMode && manualRobotId && manualRobotId !== robotId) {
-            ws.send(JSON.stringify({type: 'cmd_vel', robot_id: manualRobotId, linear: 0, angular: 0}));
-            ws.send(JSON.stringify({type: 'resume', robot_id: manualRobotId}));
+            send({type: 'cmd_vel', robot_id: manualRobotId, linear: 0, angular: 0});
+            send({type: 'resume', robot_id: manualRobotId});
             manualMode = false;
             manualRobotId = null;
             keys = {w: false, a: false, s: false, d: false};
         }
 
-        if (manualMode && manualRobotId === robotId) {
-            // Выход из текущего ручного режима
-            ws.send(JSON.stringify({type: 'cmd_vel', robot_id: robotId, linear: 0, angular: 0}));
-            ws.send(JSON.stringify({type: 'resume', robot_id: robotId}));
-            manualMode = false;
-            manualRobotId = null;
-            keys = {w: false, a: false, s: false, d: false};
-        } else {
-            // Вход в ручной режим
-            manualMode = true;
-            manualRobotId = robotId;
-            selectedRobotId = robotId;
-            ws.send(JSON.stringify({type: 'cmd_vel', robot_id: robotId, linear: 0, angular: 0}));
-        }
+        // Вход в ручной режим
+        manualMode = true;
+        manualRobotId = robotId;
+        selectedRobotId = robotId;
+        send({type: 'cmd_vel', robot_id: robotId, linear: 0, angular: 0});
         updateCoords();
     }
 

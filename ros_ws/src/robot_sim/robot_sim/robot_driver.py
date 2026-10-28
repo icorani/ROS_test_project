@@ -7,7 +7,7 @@ import math
 import json
 import os
 import yaml
-
+import time
 
 class RobotDriver(Node):
     def __init__(self):
@@ -33,7 +33,7 @@ class RobotDriver(Node):
         self.r = 0.05
         self.K = 1.1
 
-        # Текущая позиция (относительно старта)
+        # Текущая позиция (абсолютная, из /odom)
         self.x = 0.0
         self.y = 0.0
         self.yaw = 0.0
@@ -47,6 +47,7 @@ class RobotDriver(Node):
         self.manual_linear = 0.0
         self.manual_angular = 0.0
         self.manual_active = False
+        self.last_cmd_time = 0.0
 
         # Публикаторы в Gazebo (через мост)
         self.pub_left = self.create_publisher(
@@ -91,9 +92,15 @@ class RobotDriver(Node):
         self.manual_linear = msg.linear.x
         self.manual_angular = msg.angular.z
         self.manual_active = True
+        self.last_cmd_time = time.time()
         self.status = 'manual'
 
     def control_loop(self):
+        # Таймаут ручного управления (0.5 сек без cmd_vel → idle)
+        if self.manual_active and (time.time() - self.last_cmd_time) > 0.5:
+            self.manual_active = False
+            self.status = 'idle'
+
         # Публикуем состояние
         state = {
             'id': self.robot_id,
@@ -162,13 +169,11 @@ class RobotDriver(Node):
         self.pub_left.publish(Float64(data=v_left))
         self.pub_right.publish(Float64(data=v_right))
 
-
 def main():
     rclpy.init()
     node = RobotDriver()
     rclpy.spin(node)
     rclpy.shutdown()
-
 
 if __name__ == '__main__':
     main()
