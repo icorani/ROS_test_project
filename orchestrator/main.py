@@ -35,6 +35,16 @@ for a, b in EDGES:
         ADJ[a].append(b)
         ADJ[b].append(a)
 
+# ── Loading walls ──────────────────────────────────────────
+import json as jsonlib
+
+WALLS_PATH = f"/configs/walls_{MAP_NAME}.json"
+try:
+    with open(WALLS_PATH) as f:
+        WALLS_JSON = jsonlib.load(f)
+except FileNotFoundError:
+    WALLS_JSON = []
+
 # ── Dijkstra ──────────────────────────────────────────
 def find_path(start: str, goal: str) -> list[str] | None:
     if start not in POS or goal not in POS:
@@ -115,11 +125,14 @@ class OrchestratorNode(Node):
             self.publishers_order[rid].publish(msg)
 
     def send_cmd(self, rid, linear, angular):
+        self.get_logger().info(f"send_cmd: rid={rid}, linear={linear}, angular={angular}")
         if rid in self.publishers_cmd:
             msg = Twist()
             msg.linear.x = float(linear)
             msg.angular.z = float(angular)
             self.publishers_cmd[rid].publish(msg)
+        else:
+            self.get_logger().warn(f"No publisher for {rid}")
 
 rclpy.init()
 node = OrchestratorNode()
@@ -137,12 +150,13 @@ async def spin():
 async def ws_endpoint(ws: WebSocket):
     await ws.accept()
     await ws.send_text(json.dumps({"type": "map", "data": {
-        "name": CFG["name"],
-        "bounds": BOUNDS,
-        "nodes": POS,
-        "edges": EDGES,
-        "robots": ROBOTS_CFG,
-    }}))
+            "name": CFG["name"],
+            "bounds": BOUNDS,
+            "nodes": POS,
+            "edges": EDGES,
+            "robots": ROBOTS_CFG,
+            "walls": WALLS_JSON,   
+        }}))
     try:
         while True:
             # Принимаем сообщения от Canvas
