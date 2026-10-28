@@ -84,4 +84,13 @@ edges:
 robots:
   robot_1:
     start_node: C1
+    start_x: 0
+    start_y: 4
+    start_yaw: 0
     color: "#4af"
+  robot_2:
+    start_node: C5
+    start_x: 8
+    start_y: 4
+    start_yaw: 0
+    color: "#f4a"

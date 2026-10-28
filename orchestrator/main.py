@@ -4,11 +4,12 @@ import math
 import os
 import yaml
 import heapq
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 import rclpy
 from rclpy.node import Node
-from nav_msgs.msg import Odometry
+from std_msgs.msg import String
+from geometry_msgs.msg import Twist
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -23,21 +24,16 @@ NODES = CFG["nodes"]
 PARKING = CFG.get("parking", {})
 EDGES = CFG["edges"]
 BOUNDS = CFG["bounds"]
+ROBOTS_CFG = CFG.get("robots", {})
 
-# Все узлы (включая парковки)
 ALL_NODES = {**NODES, **PARKING}
 POS = {**NODES, **PARKING}
 
-# Граф: adjacency list (включая парковки)
 ADJ = {n: [] for n in ALL_NODES}
 for a, b in EDGES:
     if a in ADJ and b in ADJ:
         ADJ[a].append(b)
         ADJ[b].append(a)
-
-# ── Смещение старта (из .env) ─────────────────────────
-START_X = float(os.getenv("ROBOT_START_X", "0"))
-START_Y = float(os.getenv("ROBOT_START_Y", "0"))
 
 # ── Dijkstra ──────────────────────────────────────────
 def find_path(start: str, goal: str) -> list[str] | None:
@@ -69,34 +65,65 @@ def find_path(start: str, goal: str) -> list[str] | None:
     path.append(start)
     return list(reversed(path))
 
-# ── Состояние робота ──────────────────────────────────
-robot_state = {
-    "id": "robot_1",
-    "x": 0.0, "y": 0.0, "yaw": 0.0,
-    "status": "idle",
-    "mission": [],
-}
+# ── Состояния роботов ─────────────────────────────────
+robots = {}
+for rid, rcfg in ROBOTS_CFG.items():
+    robots[rid] = {
+        "id": rid,
+        "x": rcfg.get("start_x", 0),
+        "y": rcfg.get("start_y", 0),
+        "yaw": 0.0,
+        "status": "idle",
+        "mission": [],
+    }
 
-class OdomListener(Node):
+# ── ROS 2 нода ────────────────────────────────────────
+class OrchestratorNode(Node):
     def __init__(self):
-        super().__init__("odom_listener")
-        self.create_subscription(Odometry, "/odom", self.cb, 10)
+        super().__init__("orchestrator")
+        self.publishers_order = {}
+        self.publishers_cmd = {}
+        for rid in robots:
+            self.publishers_order[rid] = self.create_publisher(String, f"/{rid}/order", 10)
+            self.publishers_cmd[rid] = self.create_publisher(Twist, f"/{rid}/cmd_vel", 10)
+            self.create_subscription(String, f"/{rid}/state", self.make_state_cb(rid), 10)
 
-    def cb(self, msg):
-        robot_state["x"] = msg.pose.pose.position.x + START_X
-        robot_state["y"] = msg.pose.pose.position.y + START_Y
-        q = msg.pose.pose.orientation
-        siny = 2.0 * (q.w * q.z + q.x * q.y)
-        cosy = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
-        robot_state["yaw"] = math.atan2(siny, cosy)
+    def make_state_cb(self, rid):
+        def cb(msg):
+            try:
+                data = json.loads(msg.data)
+                robots[rid].update({
+                    "x": data.get("x", 0),
+                    "y": data.get("y", 0),
+                    "yaw": data.get("yaw", 0),
+                    "status": data.get("status", "idle"),
+                    "mission": data.get("mission", []),
+                })
+            except Exception as e:
+                self.get_logger().error(f"Bad state from {rid}: {e}")
+        return cb
+
+    def send_order(self, rid, path):
+        if rid in self.publishers_order:
+            msg = String()
+            msg.data = json.dumps({"path": path})
+            self.publishers_order[rid].publish(msg)
+
+    def send_cmd(self, rid, linear, angular):
+        if rid in self.publishers_cmd:
+            msg = Twist()
+            msg.linear.x = float(linear)
+            msg.angular.z = float(angular)
+            self.publishers_cmd[rid].publish(msg)
+
+rclpy.init()
+node = OrchestratorNode()
 
 @app.on_event("startup")
 async def startup():
-    rclpy.init()
-    node = OdomListener()
-    asyncio.create_task(spin(node))
+    asyncio.create_task(spin())
 
-async def spin(node):
+async def spin():
     while rclpy.ok():
         rclpy.spin_once(node, timeout_sec=0.05)
         await asyncio.sleep(0.01)
@@ -109,26 +136,46 @@ async def ws_endpoint(ws: WebSocket):
         "bounds": BOUNDS,
         "nodes": POS,
         "edges": EDGES,
+        "robots": ROBOTS_CFG,
     }}))
     try:
         while True:
-            await ws.send_text(json.dumps({"type": "state", "robots": [robot_state]}))
-            await asyncio.sleep(0.1)
+            # Принимаем сообщения от Canvas
+            try:
+                msg_text = await asyncio.wait_for(ws.receive_text(), timeout=0.1)
+                msg = json.loads(msg_text)
+                if msg.get("type") == "cmd_vel":
+                    rid = msg.get("robot_id")
+                    node.send_cmd(rid, msg.get("linear", 0), msg.get("angular", 0))
+            except asyncio.TimeoutError:
+                pass
+            # Отправляем состояния всех роботов
+            await ws.send_text(json.dumps({"type": "state", "robots": list(robots.values())}))
+            await asyncio.sleep(0.05)
+    except WebSocketDisconnect:
+        pass
     except Exception:
         pass
 
 @app.post("/order")
 async def order(payload: dict):
-    robot_id = payload.get("robot_id", "robot_1")
+    rid = payload.get("robot_id", "robot_1")
     target = payload.get("target")
-    start = payload.get("start", "C1")
+    start = payload.get("start")
+    if start is None:
+        start = robots.get(rid, {}).get("mission", [None])[0] or list(POS.keys())[0]
     path = find_path(start, target)
     if path is None:
         return {"ok": False, "error": "no path"}
-    robot_state["mission"] = path
-    robot_state["status"] = "moving"
+    robots[rid]["mission"] = path
+    robots[rid]["status"] = "moving"
+    node.send_order(rid, path)
     return {"ok": True, "path": path}
+
+@app.get("/state")
+async def state():
+    return {"robots": list(robots.values())}
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "map": MAP_NAME}
+    return {"status": "ok", "map": MAP_NAME, "robots": list(robots.keys())}

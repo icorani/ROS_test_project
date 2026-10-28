@@ -34,10 +34,11 @@ walls = [
     wall_box("wall_right",  x_max, (y_min+y_max)/2, t, y_max-y_min),
 ]
 
-
-robot = """
-    <model name="turtle">
-      <pose>0 0 0.1 0 0 0</pose>
+def robot_model(robot_id, start_x, start_y, start_yaw):
+    """Генерирует модель робота с уникальными топиками."""
+    return f"""
+    <model name="turtle_{robot_id}">
+      <pose>{start_x} {start_y} 0.1 0 0 {start_yaw}</pose>
       <link name="chassis">
         <inertial><mass>15.0</mass><inertia><ixx>0.1</ixx><iyy>0.15</iyy><izz>0.2</izz></inertia></inertial>
         <collision name="collision"><geometry><box><size>0.3 0.2 0.1</size></box></geometry></collision>
@@ -84,7 +85,7 @@ robot = """
         <d_gain>0.0</d_gain>
         <cmd_max>2.0</cmd_max>
         <cmd_min>-2.0</cmd_min>
-        <topic>/model/turtle/joint/joint_left/cmd_vel</topic>
+        <topic>/model/turtle_{robot_id}/joint/joint_left/cmd_vel</topic>
       </plugin>
       <plugin filename="gz-sim-joint-controller-system" name="gz::sim::systems::JointController">
         <joint_name>joint_right</joint_name>
@@ -94,17 +95,25 @@ robot = """
         <d_gain>0.0</d_gain>
         <cmd_max>2.0</cmd_max>
         <cmd_min>-2.0</cmd_min>
-        <topic>/model/turtle/joint/joint_right/cmd_vel</topic>
+        <topic>/model/turtle_{robot_id}/joint/joint_right/cmd_vel</topic>
       </plugin>
       <plugin filename="gz-sim-odometry-publisher-system" name="gz::sim::systems::OdometryPublisher">
-        <odom_topic>/odom</odom_topic>
+        <odom_topic>/odom_{robot_id}</odom_topic>
         <odom_frame>odom</odom_frame>
         <robot_base_frame>chassis</robot_base_frame>
         <dimensions>2</dimensions>
         <odom_publish_frequency>50</odom_publish_frequency>
       </plugin>
-    </model>
-"""
+    </model>"""
+
+robots_sdf = ""
+for robot_id, r in cfg.get("robots", {}).items():
+    robots_sdf += robot_model(
+        robot_id,
+        r.get("start_x", 0),
+        r.get("start_y", 0),
+        r.get("start_yaw", 0),
+    )
 
 sdf = f"""<?xml version="1.0"?>
 <sdf version="1.9">
@@ -129,7 +138,7 @@ sdf = f"""<?xml version="1.0"?>
       </link>
     </model>
     {''.join(walls)}
-    {robot}
+    {robots_sdf}
   </world>
 </sdf>
 """
@@ -137,4 +146,4 @@ sdf = f"""<?xml version="1.0"?>
 os.makedirs("gazebo", exist_ok=True)
 with open(OUT_PATH, "w") as f:
     f.write(sdf)
-print(f"Generated {OUT_PATH}")
+print(f"Generated {OUT_PATH} with {len(cfg.get('robots', {}))} robots")

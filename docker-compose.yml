@@ -8,6 +8,7 @@ services:
       - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
     volumes:
       - ./ros_ws:/ros_ws
+      - ./config_nodes_edges:/configs
     command: bash -c "source /opt/ros/jazzy/setup.bash && tail -f /dev/null"
     network_mode: host
     ipc: host
@@ -32,17 +33,13 @@ services:
       source /opt/ros/jazzy/setup.bash &&
       gz sim -s -r /gazebo/warehouse_${MAP}.sdf &
       sleep 5 &&
-      ros2 run ros_gz_sim create
-      --world empty
-      --file \$(ros2 pkg prefix --share turtlebot3_gazebo)/models/turtlebot3_burger/model.sdf
-      --name turtle3
-      -x ${ROBOT_START_X:-0} -y ${ROBOT_START_Y:-0} -z ${ROBOT_START_Z:-0.1} &
-      sleep 3 &&
       ros2 run ros_gz_bridge parameter_bridge
-      /cmd_vel@geometry_msgs/msg/Twist@gz.msgs.Twist
-      /odom@nav_msgs/msg/Odometry@gz.msgs.Odometry
-      /model/turtle/joint/joint_left/cmd_vel@std_msgs/msg/Float64@gz.msgs.Double
-      /model/turtle/joint/joint_right/cmd_vel@std_msgs/msg/Float64@gz.msgs.Double
+      /odom_robot_1@nav_msgs/msg/Odometry@gz.msgs.Odometry
+      /model/turtle_robot_1/joint/joint_left/cmd_vel@std_msgs/msg/Float64@gz.msgs.Double
+      /model/turtle_robot_1/joint/joint_right/cmd_vel@std_msgs/msg/Float64@gz.msgs.Double
+      /odom_robot_2@nav_msgs/msg/Odometry@gz.msgs.Odometry
+      /model/turtle_robot_2/joint/joint_left/cmd_vel@std_msgs/msg/Float64@gz.msgs.Double
+      /model/turtle_robot_2/joint/joint_right/cmd_vel@std_msgs/msg/Float64@gz.msgs.Double
       && wait
       "
     network_mode: host

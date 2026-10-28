@@ -1,223 +1,343 @@
 <!DOCTYPE html>
 <html>
 <head>
-<meta charset="utf-8">
-<title>Warehouse — ROS 2 + Gazebo</title>
-<style>
-  html, body { margin: 0; padding: 0; background: #1a1a1a; overflow: hidden; }
-  canvas { display: block; }
-  #status {
-    position: fixed; top: 10px; left: 10px;
-    color: #4af; font-family: monospace; font-size: 14px;
-    background: rgba(0,0,0,0.5); padding: 6px 10px; border-radius: 4px;
-  }
-</style>
+    <meta charset="utf-8">
+    <title>Warehouse — ROS 2 + Gazebo</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            background: #1a1a1a;
+            overflow: hidden;
+        }
+
+        canvas {
+            display: block;
+        }
+
+        #status {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            color: #4af;
+            font-family: monospace;
+            font-size: 14px;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 6px 10px;
+            border-radius: 4px;
+        }
+
+        #robot-table {
+            position: fixed;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.75);
+            color: #ddd;
+            font-family: monospace;
+            font-size: 14px;
+            border-radius: 4px;
+            padding: 10px 14px;
+            max-height: 40vh;
+            overflow-y: auto;
+        }
+
+        #robot-table table {
+            border-collapse: collapse;
+        }
+
+        #robot-table th, #robot-table td {
+          padding: 4px 10px;
+          text-align: left;
+          border-bottom: 1px solid #333;
+        }
+
+        #robot-table th {
+            color: #888;
+            font-weight: normal;
+        }
+
+        #robot-table td.status-idle {
+            color: #4af;
+        }
+
+        #robot-table td.status-moving {
+            color: #4f4;
+        }
+
+        #robot-table td.status-done {
+            color: #ff4;
+        }
+
+        #robot-table td.status-error {
+            color: #f44;
+        }
+
+        #robot-table td.status-manual {
+            color: #f4a;
+        }
+    </style>
 </head>
 <body>
 <canvas id="c"></canvas>
 <div id="status">connecting…</div>
+<div id="robot-table">
+    <table>
+        <thead>
+        <tr>
+            <th>ID</th>
+            <th>X</th>
+            <th>Y</th>
+            <th>Status</th>
+            <th>Mission</th>
+        </tr>
+        </thead>
+        <tbody id="robot-table-body"></tbody>
+    </table>
+</div>
 
 <script>
-const canvas = document.getElementById('c');
-const ctx = canvas.getContext('2d');
-const statusEl = document.getElementById('status');
+    const canvas = document.getElementById('c');
+    const ctx = canvas.getContext('2d');
+    const statusEl = document.getElementById('status');
 
-function resize() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-}
-window.addEventListener('resize', resize);
-resize();
+    function resize() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+    }
 
-// ── Параметры мира ────────────────────────────────────
-const SCALE = 60;
-let camera = { x: 6, y: 4 }; // центр склада (потом следит за роботом)
+    window.addEventListener('resize', resize);
+    resize();
 
-// Данные из конфига (приходят по WebSocket)
-let mapData = null;
-let robots = [];
+    // ── Параметры мира ────────────────────────────────────
+    const SCALE = 60;
+    let camera = {x: 6, y: 4};
+    let mapData = null;
+    let robots = [];
 
-// ── Преобразование мир → экран ────────────────────────
-function toPx(x, y) {
-  return [
-    canvas.width  / 2 + (x - camera.x) * SCALE,
-    canvas.height / 2 - (y - camera.y) * SCALE
-  ];
-}
+    // ── Преобразование мир → экран ────────────────────────
+    function toPx(x, y) {
+        return [
+            canvas.width / 2 + (x - camera.x) * SCALE,
+            canvas.height / 2 - (y - camera.y) * SCALE
+        ];
+    }
 
-// ── Отрисовка сетки ───────────────────────────────────
-function drawGrid() {
-  ctx.strokeStyle = '#2a2a2a';
-  ctx.lineWidth = 1;
-  const range = 30;
-  const cx = Math.round(camera.x);
-  const cy = Math.round(camera.y);
-  for (let i = cx - range; i <= cx + range; i++) {
-    const [x1, y1] = toPx(i, cy - range);
-    const [x2, y2] = toPx(i, cy + range);
-    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
-  }
-  for (let j = cy - range; j <= cy + range; j++) {
-    const [x3, y3] = toPx(cx - range, j);
-    const [x4, y4] = toPx(cx + range, j);
-    ctx.beginPath(); ctx.moveTo(x3, y3); ctx.lineTo(x4, y4); ctx.stroke();
-  }
-}
+    // ── Сетка ─────────────────────────────────────────────
+    function drawGrid() {
+        ctx.strokeStyle = '#2a2a2a';
+        ctx.lineWidth = 1;
+        const range = 30;
+        const cx = Math.round(camera.x);
+        const cy = Math.round(camera.y);
+        for (let i = cx - range; i <= cx + range; i++) {
+            const [x1, y1] = toPx(i, cy - range);
+            const [x2, y2] = toPx(i, cy + range);
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.stroke();
+        }
+        for (let j = cy - range; j <= cy + range; j++) {
+            const [x3, y3] = toPx(cx - range, j);
+            const [x4, y4] = toPx(cx + range, j);
+            ctx.beginPath();
+            ctx.moveTo(x3, y3);
+            ctx.lineTo(x4, y4);
+            ctx.stroke();
+        }
+    }
 
-// ── Отрисовка осей координат ──────────────────────────
-function drawAxes() {
-  // Оси (неяркие, серые)
-  ctx.strokeStyle = '#555';
-  ctx.lineWidth = 1;
+    // ── Оси (неяркие, с чётными подписями) ────────────────
+    function drawAxes() {
+        ctx.strokeStyle = '#555';
+        ctx.lineWidth = 1;
 
-  // Ось X (горизонтальная, y=0)
-  const xStart = toPx(-10, 0);
-  const xEnd = toPx(20, 0);
-  ctx.beginPath();
-  ctx.moveTo(xStart[0], xStart[1]);
-  ctx.lineTo(xEnd[0], xEnd[1]);
-  ctx.stroke();
+        const xStart = toPx(-10, 0);
+        const xEnd = toPx(20, 0);
+        ctx.beginPath();
+        ctx.moveTo(xStart[0], xStart[1]);
+        ctx.lineTo(xEnd[0], xEnd[1]);
+        ctx.stroke();
 
-  // Ось Y (вертикальная, x=0)
-  const yStart = toPx(0, -10);
-  const yEnd = toPx(0, 20);
-  ctx.beginPath();
-  ctx.moveTo(yStart[0], yStart[1]);
-  ctx.lineTo(yEnd[0], yEnd[1]);
-  ctx.stroke();
+        const yStart = toPx(0, -10);
+        const yEnd = toPx(0, 20);
+        ctx.beginPath();
+        ctx.moveTo(yStart[0], yStart[1]);
+        ctx.lineTo(yEnd[0], yEnd[1]);
+        ctx.stroke();
 
-  // Подписи по оси X (чётные: 0, 2, 4, ...)
-  ctx.fillStyle = '#777';
-  ctx.font = '11px monospace';
-  ctx.textAlign = 'center';
-  for (let x = -10; x <= 20; x += 2) {
-    const [px, py] = toPx(x, 0);
-    ctx.fillText(x.toString(), px, py + 14);
-  }
+        ctx.fillStyle = '#777';
+        ctx.font = '11px monospace';
+        ctx.textAlign = 'center';
+        for (let x = -10; x <= 20; x += 2) {
+            const [px, py] = toPx(x, 0);
+            ctx.fillText(x.toString(), px, py + 14);
+        }
+        ctx.textAlign = 'right';
+        for (let y = -10; y <= 20; y += 2) {
+            const [px, py] = toPx(0, y);
+            ctx.fillText(y.toString(), px - 6, py + 4);
+        }
 
-  // Подписи по оси Y (чётные: 0, 2, 4, ...)
-  ctx.textAlign = 'right';
-  for (let y = -10; y <= 20; y += 2) {
-    const [px, py] = toPx(0, y);
-    ctx.fillText(y.toString(), px - 6, py + 4);
-  }
+        ctx.fillStyle = '#aaa';
+        ctx.textAlign = 'right';
+        const [zeroPx, zeroPy] = toPx(0, 0);
+        ctx.fillText('0', zeroPx - 6, zeroPy + 14);
+        ctx.textAlign = 'left';
+    }
 
-  // Ноль (выделяем)
-  ctx.fillStyle = '#aaa';
-  ctx.textAlign = 'right';
-  const [zeroPx, zeroPy] = toPx(0, 0);
-  ctx.fillText('0', zeroPx - 6, zeroPy + 14);
+    // ── Стены ─────────────────────────────────────────────
+    function drawWalls() {
+        if (!mapData) return;
+        const b = mapData.bounds;
+        ctx.strokeStyle = '#888';
+        ctx.lineWidth = 6;
+        ctx.lineCap = 'round';
+        const [x1, y1] = toPx(b.x_min, b.y_min);
+        const [x2, y2] = toPx(b.x_max, b.y_min);
+        const [x3, y3] = toPx(b.x_max, b.y_max);
+        const [x4, y4] = toPx(b.x_min, b.y_max);
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.lineTo(x3, y3);
+        ctx.lineTo(x4, y4);
+        ctx.closePath();
+        ctx.stroke();
+    }
 
-  ctx.textAlign = 'left'; // сброс
-}
+    // ── Граф ──────────────────────────────────────────────
+    function drawGraph() {
+        if (!mapData) return;
+        const nodes = mapData.nodes;
+        const edges = mapData.edges;
 
-// ── Отрисовка стен (из bounds) ────────────────────────
-function drawWalls() {
-  if (!mapData) return;
-  const b = mapData.bounds;
-  ctx.strokeStyle = '#888';
-  ctx.lineWidth = 6;
-  ctx.lineCap = 'round';
-  const [x1, y1] = toPx(b.x_min, b.y_min);
-  const [x2, y2] = toPx(b.x_max, b.y_min);
-  const [x3, y3] = toPx(b.x_max, b.y_max);
-  const [x4, y4] = toPx(b.x_min, b.y_max);
-  ctx.beginPath();
-  ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.lineTo(x3, y3); ctx.lineTo(x4, y4); ctx.closePath();
-  ctx.stroke();
-}
+        ctx.strokeStyle = '#3a5a7a';
+        ctx.lineWidth = 3;
+        edges.forEach(([a, b]) => {
+            if (!nodes[a] || !nodes[b]) return;
+            const [x1, y1] = toPx(nodes[a].x, nodes[a].y);
+            const [x2, y2] = toPx(nodes[b].x, nodes[b].y);
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.stroke();
+        });
 
-// ── Отрисовка графа (узлы, рёбра, парковки) ───────────
-function drawGraph() {
-  if (!mapData) return;
-  const nodes = mapData.nodes;
-  const edges = mapData.edges;
+        Object.entries(nodes).forEach(([id, n]) => {
+            const [px, py] = toPx(n.x, n.y);
+            const isParking = id.startsWith('P');
+            ctx.fillStyle = isParking ? '#a3e' : '#4af';
+            ctx.beginPath();
+            ctx.arc(px, py, isParking ? 6 : 5, 0, 2 * Math.PI);
+            ctx.fill();
+            ctx.fillStyle = '#888';
+            ctx.font = '10px monospace';
+            ctx.fillText(id, px + 8, py - 6);
+        });
+    }
 
-  // Рёбра
-  ctx.strokeStyle = '#3a5a7a';
-  ctx.lineWidth = 3;
-  edges.forEach(([a, b]) => {
-    if (!nodes[a] || !nodes[b]) return;
-    const [x1, y1] = toPx(nodes[a].x, nodes[a].y);
-    const [x2, y2] = toPx(nodes[b].x, nodes[b].y);
-    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
-  });
+    // ── Роботы ────────────────────────────────────────────
+    function drawRobot(r) {
+        const [px, py] = toPx(r.x, r.y);
+        const color = (mapData && mapData.robots && mapData.robots[r.id])
+            ? mapData.robots[r.id].color : '#4af';
 
-  // Узлы
-  Object.entries(nodes).forEach(([id, n]) => {
-    const [px, py] = toPx(n.x, n.y);
-    const isParking = id.startsWith('P');
-    ctx.fillStyle = isParking ? '#a3e' : '#4af';
-    ctx.beginPath();
-    ctx.arc(px, py, isParking ? 6 : 5, 0, 2 * Math.PI);
-    ctx.fill();
-    ctx.fillStyle = '#888';
-    ctx.font = '10px monospace';
-    ctx.fillText(id, px + 8, py - 6);
-  });
-}
+        ctx.save();
+        ctx.translate(px, py);
+        ctx.rotate(-r.yaw);
+        ctx.fillStyle = r.status === 'error' ? '#f44' : (r.status === 'moving' ? '#4f4' : color);
+        ctx.fillRect(-0.15 * SCALE, -0.1 * SCALE, 0.3 * SCALE, 0.2 * SCALE);
+        ctx.restore();
 
-// ── Отрисовка робота ──────────────────────────────────
-function drawRobot(r) {
-  const [px, py] = toPx(r.x, r.y);
-  ctx.save();
-  ctx.translate(px, py);
-  ctx.rotate(-r.yaw);
-  ctx.fillStyle = r.status === 'error' ? '#f44' : (r.status === 'moving' ? '#4f4' : '#4af');
-  ctx.fillRect(-0.15 * SCALE, -0.1 * SCALE, 0.3 * SCALE, 0.2 * SCALE);
-  ctx.restore();
-  ctx.strokeStyle = '#fff';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(px, py);
-  ctx.lineTo(px + Math.cos(r.yaw) * 0.25 * SCALE, py - Math.sin(r.yaw) * 0.25 * SCALE);
-  ctx.stroke();
-  ctx.fillStyle = '#fff';
-  ctx.font = '12px monospace';
-  ctx.fillText(r.id, px + 15, py - 15);
-}
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(px, py);
+        ctx.lineTo(px + Math.cos(r.yaw) * 0.25 * SCALE, py - Math.sin(r.yaw) * 0.25 * SCALE);
+        ctx.stroke();
 
-// ── WebSocket ─────────────────────────────────────────
-let ws;
-function connect() {
-  ws = new WebSocket('ws://localhost:8191/ws');
-  ws.onopen = () => { statusEl.textContent = 'connected'; statusEl.style.color = '#4f4'; };
-  ws.onmessage = (e) => {
-    try {
-      const msg = JSON.parse(e.data);
-      if (msg.type === 'map') {
-        mapData = msg.data;
-        console.log('Map loaded:', mapData.name);
-      } else if (msg.type === 'state') {
-        robots = msg.robots || [];
-      }
-    } catch (err) { console.error(err); }
-  };
-  ws.onerror = () => { statusEl.textContent = 'ws error'; statusEl.style.color = '#f44'; };
-  ws.onclose = () => {
-    statusEl.textContent = 'disconnected — reconnecting…';
-    statusEl.style.color = '#f44';
-    setTimeout(connect, 1000);
-  };
-}
-connect();
+        ctx.fillStyle = '#fff';
+        ctx.font = '12px monospace';
+        ctx.fillText(r.id, px + 15, py - 15);
+    }
 
-// ── Главный цикл ──────────────────────────────────────
-function loop() {
-  if (robots.length > 0) {
-    camera.x += (robots[0].x - camera.x) * 0.1;
-    camera.y += (robots[0].y - camera.y) * 0.1;
-  }
-  ctx.fillStyle = '#1a1a1a';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  drawGrid();
-  drawAxes();
-  drawWalls();
-  drawGraph();
-  robots.forEach(drawRobot);
-  requestAnimationFrame(loop);
-}
-loop();
+    // ── Таблица статусов ──────────────────────────────────
+    function updateRobotTable(robots) {
+        const tbody = document.getElementById('robot-table-body');
+        tbody.innerHTML = '';
+        robots.forEach(r => {
+            const tr = document.createElement('tr');
+            const mission = r.mission && r.mission.length > 0
+                ? r.mission.slice(0, 3).join('→') + (r.mission.length > 3 ? '…' : '')
+                : '—';
+            tr.innerHTML = `
+      <td>${r.id}</td>
+      <td>${r.x.toFixed(2)}</td>
+      <td>${r.y.toFixed(2)}</td>
+      <td class="status-${r.status}">${r.status}</td>
+      <td>${mission}</td>
+    `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    // ── WebSocket ─────────────────────────────────────────
+    let ws;
+
+    function connect() {
+        ws = new WebSocket('ws://localhost:8191/ws');
+        ws.onopen = () => {
+            statusEl.textContent = 'connected';
+            statusEl.style.color = '#4f4';
+        };
+        ws.onmessage = (e) => {
+            try {
+                const msg = JSON.parse(e.data);
+                if (msg.type === 'map') {
+                    mapData = msg.data;
+                    console.log('Map loaded:', mapData.name);
+                } else if (msg.type === 'state') {
+                    robots = msg.robots || [];
+                    updateRobotTable(robots);
+                }
+            } catch (err) {
+                console.error(err);
+            }
+        };
+        ws.onerror = () => {
+            statusEl.textContent = 'ws error';
+            statusEl.style.color = '#f44';
+        };
+        ws.onclose = () => {
+            statusEl.textContent = 'disconnected — reconnecting…';
+            statusEl.style.color = '#f44';
+            setTimeout(connect, 1000);
+        };
+    }
+
+    connect();
+
+    // ── Главный цикл ──────────────────────────────────────
+    function loop() {
+        if (robots.length > 0) {
+            // Камера следит за первым роботом (можно изменить на выбранного)
+            camera.x += (robots[0].x - camera.x) * 0.1;
+            camera.y += (robots[0].y - camera.y) * 0.1;
+        }
+        ctx.fillStyle = '#1a1a1a';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        drawGrid();
+        drawAxes();
+        drawWalls();
+        drawGraph();
+        robots.forEach(drawRobot);
+        requestAnimationFrame(loop);
+    }
+
+    loop();
 </script>
 </body>
 </html>
