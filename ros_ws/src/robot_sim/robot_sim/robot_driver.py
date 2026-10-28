@@ -97,8 +97,8 @@ class RobotDriver(Node):
         # Публикуем состояние
         state = {
             'id': self.robot_id,
-            'x': self.x + self.start_x,
-            'y': self.y + self.start_y,
+            'x': self.x,
+            'y': self.y,
             'yaw': self.yaw,
             'status': self.status,
             'mission': self.mission,
@@ -129,8 +129,8 @@ class RobotDriver(Node):
             self.status = 'error'
             return
 
-        tx = self.node_coords[target_id]['x'] - self.start_x
-        ty = self.node_coords[target_id]['y'] - self.start_y
+        tx = self.node_coords[target_id]['x']
+        ty = self.node_coords[target_id]['y']
 
         dx = tx - self.x
         dy = ty - self.y
