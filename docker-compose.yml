@@ -28,13 +28,13 @@ services:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - ./gazebo:/gazebo
     command: >
-      bash -c "source /opt/ros/jazzy/setup.bash &&
+      bash -c "
+      source /opt/ros/jazzy/setup.bash &&
       gz sim -s -r /gazebo/warehouse.sdf &
-      ros2 run ros_gz_bridge parameter_bridge
-      /cmd_vel@geometry_msgs/msg/Twist@gz.msgs.Twist
-      /odom@nav_msgs/msg/Odometry@gz.msgs.Odometry
-      /joint_states@sensor_msgs/msg/JointState@gz.msgs.Model
-      && wait"
+      sleep 5 &&
+      ros2 run ros_gz_bridge parameter_bridge --ros-args -p config_file:=/gazebo/bridge.yaml
+      && wait
+      "
     network_mode: host
     ipc: host
 
