@@ -279,22 +279,33 @@
 
     // ── Стены ─────────────────────────────────────────────
     function drawWalls() {
-        if (!mapData) return;
+    if (!mapData) return;
+    ctx.strokeStyle = '#888';
+    ctx.lineWidth = 6;
+    ctx.lineCap = 'round';
+    
+    // Периметр (из bounds) — если walls нет
+    if (!mapData.walls || mapData.walls.length === 0) {
         const b = mapData.bounds;
-        ctx.strokeStyle = '#888';
-        ctx.lineWidth = 6;
-        ctx.lineCap = 'round';
         const [x1, y1] = toPx(b.x_min, b.y_min);
         const [x2, y2] = toPx(b.x_max, b.y_min);
         const [x3, y3] = toPx(b.x_max, b.y_max);
         const [x4, y4] = toPx(b.x_min, b.y_max);
         ctx.beginPath();
+        ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.lineTo(x3, y3); ctx.lineTo(x4, y4); ctx.closePath();
+        ctx.stroke();
+        return;
+    }
+    
+    // Все стены (внешние + внутренние) из JSON
+    mapData.walls.forEach(w => {
+        const [x1, y1] = toPx(w.x1, w.y1);
+        const [x2, y2] = toPx(w.x2, w.y2);
+        ctx.beginPath();
         ctx.moveTo(x1, y1);
         ctx.lineTo(x2, y2);
-        ctx.lineTo(x3, y3);
-        ctx.lineTo(x4, y4);
-        ctx.closePath();
         ctx.stroke();
+    });
     }
 
     // ── Граф ──────────────────────────────────────────────
@@ -528,22 +539,23 @@
 
     // WASD
     window.addEventListener('keydown', (e) => {
-        if (!manualMode) return;
-        const k = e.key.toLowerCase();
-        if (k === 'w') keys.w = true;
-        if (k === 'a') keys.a = true;
-        if (k === 's') keys.s = true;
-        if (k === 'd') keys.d = true;
-        if (k === 'escape' && manualRobotId) {
-            toggleManual(manualRobotId);
-        }
+    if (!manualMode) return;
+    const code = e.code;
+    if (code === 'KeyW') keys.w = true;
+    if (code === 'KeyA') keys.a = true;
+    if (code === 'KeyS') keys.s = true;
+    if (code === 'KeyD') keys.d = true;
+    if (code === 'Escape' && manualRobotId) {
+        toggleManual(manualRobotId);
+    }
     });
+
     window.addEventListener('keyup', (e) => {
-        const k = e.key.toLowerCase();
-        if (k === 'w') keys.w = false;
-        if (k === 'a') keys.a = false;
-        if (k === 's') keys.s = false;
-        if (k === 'd') keys.d = false;
+    const code = e.code;
+    if (code === 'KeyW') keys.w = false;
+    if (code === 'KeyA') keys.a = false;
+    if (code === 'KeyS') keys.s = false;
+    if (code === 'KeyD') keys.d = false;
     });
 
     // ── Главный цикл ──────────────────────────────────────
