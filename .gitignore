@@ -1,0 +1,27 @@
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+
+# Build artifacts
+build/
+install/
+log/
+colcon_ws/
+
+# Docker
+*.log
