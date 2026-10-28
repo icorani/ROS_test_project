@@ -40,7 +40,6 @@
             border-radius: 4px;
             padding: 10px 14px;
             max-height: 40vh;
-            max-width: 90vw;
             overflow-y: auto;
         }
 
@@ -63,21 +62,6 @@
             color: #4af;
         }
 
-        #robot-table td.mission {
-            white-space: nowrap;
-            font-size: 13px;
-        }
-
-        #robot-table td.mission .current {
-            font-weight: bold;
-            color: #ff4;
-        }
-
-        #robot-table td.mission .done {
-            color: #4f4;
-        }
-
-
         #robot-table td.status-moving {
             color: #4f4;
         }
@@ -93,6 +77,87 @@
         #robot-table td.status-manual {
             color: #f4a;
         }
+
+        #robot-table tr.selected {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        #robot-table td.mission {
+            white-space: nowrap;
+            font-size: 13px;
+        }
+
+        #robot-table td.mission .current {
+            font-weight: bold;
+            color: #ff4;
+        }
+
+        #robot-table td.mission .done {
+            color: #4f4;
+        }
+
+        .ctrl-btn {
+            background: #333;
+            color: #ddd;
+            border: 1px solid #555;
+            padding: 2px 8px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-family: monospace;
+            font-size: 12px;
+        }
+
+        .ctrl-btn:hover {
+            background: #444;
+        }
+
+        .ctrl-btn.active {
+            background: #a33;
+            color: #fff;
+        }
+
+        #coords {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.8);
+            color: #fff;
+            font-family: monospace;
+            padding: 12px 18px;
+            border-radius: 6px;
+            font-size: 22px;
+            line-height: 1.4;
+            border: 2px solid #4af;
+        }
+
+        #coords.manual {
+            border-color: #f44;
+        }
+
+        #coords .label {
+            color: #888;
+            font-size: 14px;
+        }
+
+        #coords .val {
+            color: #4af;
+        }
+
+        #coords.manual .val {
+            color: #f44;
+        }
+
+        #help {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            color: #aaa;
+            font-family: monospace;
+            font-size: 12px;
+            padding: 8px 12px;
+            border-radius: 4px;
+        }
     </style>
 </head>
 <body>
@@ -107,11 +172,19 @@
             <th>Y</th>
             <th>Status</th>
             <th>Mission</th>
+            <th></th>
         </tr>
         </thead>
         <tbody id="robot-table-body"></tbody>
     </table>
 </div>
+<div id="coords" style="display:none;">
+    <div><span class="label">ROBOT:</span> <span class="val" id="coord-id">—</span></div>
+    <div><span class="label">X:</span> <span class="val" id="coord-x">—</span></div>
+    <div><span class="label">Y:</span> <span class="val" id="coord-y">—</span></div>
+    <div><span class="label">YAW:</span> <span class="val" id="coord-yaw">—</span></div>
+</div>
+<div id="help">WASD — управление | Esc — выход</div>
 
 <script>
     const canvas = document.getElementById('c');
@@ -126,11 +199,15 @@
     window.addEventListener('resize', resize);
     resize();
 
-    // ── Параметры мира ────────────────────────────────────
+    // ── Состояние ─────────────────────────────────────────
     const SCALE = 60;
     let camera = {x: 6, y: 4};
     let mapData = null;
     let robots = [];
+    let selectedRobotId = null;
+    let manualMode = false;
+    let manualRobotId = null;
+    let keys = {w: false, a: false, s: false, d: false};
 
     // ── Преобразование мир → экран ────────────────────────
     function toPx(x, y) {
@@ -165,25 +242,22 @@
         }
     }
 
-    // ── Оси (неяркие, с чётными подписями) ────────────────
+    // ── Оси ───────────────────────────────────────────────
     function drawAxes() {
         ctx.strokeStyle = '#555';
         ctx.lineWidth = 1;
-
         const xStart = toPx(-10, 0);
         const xEnd = toPx(20, 0);
         ctx.beginPath();
         ctx.moveTo(xStart[0], xStart[1]);
         ctx.lineTo(xEnd[0], xEnd[1]);
         ctx.stroke();
-
         const yStart = toPx(0, -10);
         const yEnd = toPx(0, 20);
         ctx.beginPath();
         ctx.moveTo(yStart[0], yStart[1]);
         ctx.lineTo(yEnd[0], yEnd[1]);
         ctx.stroke();
-
         ctx.fillStyle = '#777';
         ctx.font = '11px monospace';
         ctx.textAlign = 'center';
@@ -196,7 +270,6 @@
             const [px, py] = toPx(0, y);
             ctx.fillText(y.toString(), px - 6, py + 4);
         }
-
         ctx.fillStyle = '#aaa';
         ctx.textAlign = 'right';
         const [zeroPx, zeroPy] = toPx(0, 0);
@@ -229,7 +302,6 @@
         if (!mapData) return;
         const nodes = mapData.nodes;
         const edges = mapData.edges;
-
         ctx.strokeStyle = '#3a5a7a';
         ctx.lineWidth = 3;
         edges.forEach(([a, b]) => {
@@ -241,7 +313,6 @@
             ctx.lineTo(x2, y2);
             ctx.stroke();
         });
-
         Object.entries(nodes).forEach(([id, n]) => {
             const [px, py] = toPx(n.x, n.y);
             const isParking = id.startsWith('P');
@@ -261,10 +332,25 @@
         const color = (mapData && mapData.robots && mapData.robots[r.id])
             ? mapData.robots[r.id].color : '#4af';
 
+        // Обводка выбранного/управляемого
+        if (r.id === manualRobotId) {
+            ctx.strokeStyle = '#f44';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(px, py, 0.35 * SCALE, 0, 2 * Math.PI);
+            ctx.stroke();
+        } else if (r.id === selectedRobotId) {
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(px, py, 0.3 * SCALE, 0, 2 * Math.PI);
+            ctx.stroke();
+        }
+
         ctx.save();
         ctx.translate(px, py);
         ctx.rotate(-r.yaw);
-        ctx.fillStyle = r.status === 'error' ? '#f44' : (r.status === 'moving' ? '#4f4' : color);
+        ctx.fillStyle = r.status === 'error' ? '#f44' : (r.status === 'moving' ? '#4f4' : (r.status === 'manual' ? '#f4a' : color));
         ctx.fillRect(-0.15 * SCALE, -0.1 * SCALE, 0.3 * SCALE, 0.2 * SCALE);
         ctx.restore();
 
@@ -280,14 +366,15 @@
         ctx.fillText(r.id, px + 15, py - 15);
     }
 
-    // ── Таблица статусов ──────────────────────────────────
+    // ── Таблица ───────────────────────────────────────────
     function updateRobotTable(robots) {
         const tbody = document.getElementById('robot-table-body');
         tbody.innerHTML = '';
         robots.forEach(r => {
             const tr = document.createElement('tr');
+            tr.dataset.robotId = r.id;
+            if (r.id === selectedRobotId) tr.classList.add('selected');
 
-            // Миссия с подсветкой текущего узла
             let missionHtml = '—';
             if (r.mission && r.mission.length > 0) {
                 const idx = r.mission_idx || 0;
@@ -298,22 +385,47 @@
                 }).join(' → ');
             }
 
+            const isManual = r.id === manualRobotId;
+            const btnText = isManual ? '■ Выход' : '▶ Управлять';
+            const btnClass = isManual ? 'ctrl-btn active' : 'ctrl-btn';
+
             tr.innerHTML = `
       <td>${r.id}</td>
       <td>${r.x.toFixed(2)}</td>
       <td>${r.y.toFixed(2)}</td>
       <td class="status-${r.status}">${r.status}</td>
       <td class="mission">${missionHtml}</td>
+      <td><button class="${btnClass}" data-robot-id="${r.id}">${btnText}</button></td>
     `;
             tbody.appendChild(tr);
         });
+    }
+
+    // ── Координаты выбранного ─────────────────────────────
+    function updateCoords() {
+        const el = document.getElementById('coords');
+        if (!selectedRobotId) {
+            el.style.display = 'none';
+            return;
+        }
+        const r = robots.find(x => x.id === selectedRobotId);
+        if (!r) {
+            el.style.display = 'none';
+            return;
+        }
+        el.style.display = 'block';
+        el.classList.toggle('manual', manualMode);
+        document.getElementById('coord-id').textContent = r.id + (manualMode ? ' (MANUAL)' : '');
+        document.getElementById('coord-x').textContent = r.x.toFixed(2);
+        document.getElementById('coord-y').textContent = r.y.toFixed(2);
+        document.getElementById('coord-yaw').textContent = (r.yaw * 180 / Math.PI).toFixed(1) + '°';
     }
 
     // ── WebSocket ─────────────────────────────────────────
     let ws;
 
     function connect() {
-        ws = new WebSocket('ws://localhost:8191/ws');
+        ws = new WebSocket(`ws://${window.location.hostname}:8191/ws`);
         ws.onopen = () => {
             statusEl.textContent = 'connected';
             statusEl.style.color = '#4f4';
@@ -323,10 +435,13 @@
                 const msg = JSON.parse(e.data);
                 if (msg.type === 'map') {
                     mapData = msg.data;
-                    console.log('Map loaded:', mapData.name);
+                    if (!selectedRobotId && msg.data.robots) {
+                        selectedRobotId = Object.keys(msg.data.robots)[0];
+                    }
                 } else if (msg.type === 'state') {
                     robots = msg.robots || [];
                     updateRobotTable(robots);
+                    updateCoords();
                 }
             } catch (err) {
                 console.error(err);
@@ -345,13 +460,97 @@
 
     connect();
 
+    // ── Управление ────────────────────────────────────────
+    function sendCmd() {
+        if (!manualMode || !manualRobotId || !ws) return;
+        let linear = 0, angular = 0;
+        if (keys.w) linear += 0.3;
+        if (keys.s) linear -= 0.3;
+        if (keys.a) angular += 1.0;
+        if (keys.d) angular -= 1.0;
+        ws.send(JSON.stringify({
+            type: 'cmd_vel',
+            robot_id: manualRobotId,
+            linear: linear,
+            angular: angular
+        }));
+    }
+
+    setInterval(sendCmd, 50);
+
+    function toggleManual(robotId) {
+        // Если уже управляем другим роботом — сначала выходим из него
+        if (manualMode && manualRobotId && manualRobotId !== robotId) {
+            ws.send(JSON.stringify({type: 'cmd_vel', robot_id: manualRobotId, linear: 0, angular: 0}));
+            ws.send(JSON.stringify({type: 'resume', robot_id: manualRobotId}));
+            manualMode = false;
+            manualRobotId = null;
+            keys = {w: false, a: false, s: false, d: false};
+        }
+
+        if (manualMode && manualRobotId === robotId) {
+            // Выход из текущего ручного режима
+            ws.send(JSON.stringify({type: 'cmd_vel', robot_id: robotId, linear: 0, angular: 0}));
+            ws.send(JSON.stringify({type: 'resume', robot_id: robotId}));
+            manualMode = false;
+            manualRobotId = null;
+            keys = {w: false, a: false, s: false, d: false};
+        } else {
+            // Вход в ручной режим
+            manualMode = true;
+            manualRobotId = robotId;
+            selectedRobotId = robotId;
+            ws.send(JSON.stringify({type: 'cmd_vel', robot_id: robotId, linear: 0, angular: 0}));
+        }
+        updateCoords();
+    }
+
+    // Клик по строке таблицы
+    document.getElementById('robot-table-body').addEventListener('click', (e) => {
+        const tr = e.target.closest('tr');
+        if (!tr) return;
+        const rid = tr.dataset.robotId;
+        if (!rid) return;
+
+        if (e.target.classList.contains('ctrl-btn')) {
+            toggleManual(rid);
+        } else {
+            selectedRobotId = rid;
+        }
+        updateCoords();
+    });
+
+    // WASD
+    window.addEventListener('keydown', (e) => {
+        if (!manualMode) return;
+        const k = e.key.toLowerCase();
+        if (k === 'w') keys.w = true;
+        if (k === 'a') keys.a = true;
+        if (k === 's') keys.s = true;
+        if (k === 'd') keys.d = true;
+        if (k === 'escape' && manualRobotId) {
+            toggleManual(manualRobotId);
+        }
+    });
+    window.addEventListener('keyup', (e) => {
+        const k = e.key.toLowerCase();
+        if (k === 'w') keys.w = false;
+        if (k === 'a') keys.a = false;
+        if (k === 's') keys.s = false;
+        if (k === 'd') keys.d = false;
+    });
+
     // ── Главный цикл ──────────────────────────────────────
     function loop() {
-        if (robots.length > 0) {
-            // Камера следит за первым роботом (можно изменить на выбранного)
-            camera.x += (robots[0].x - camera.x) * 0.1;
-            camera.y += (robots[0].y - camera.y) * 0.1;
+        // Камера следует за выбранным роботом
+        if (selectedRobotId) {
+            const r = robots.find(x => x.id === selectedRobotId);
+            if (r) {
+                camera.x += (r.x - camera.x) * 0.1;
+                camera.y += (r.y - camera.y) * 0.1;
+            }
         }
+
         ctx.fillStyle = '#1a1a1a';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         drawGrid();

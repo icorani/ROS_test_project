@@ -65,6 +65,9 @@ def find_path(start: str, goal: str) -> list[str] | None:
     path.append(start)
     return list(reversed(path))
 
+def nearest_node(x, y):
+    return min(POS.keys(), key=lambda n: math.dist((POS[n]["x"], POS[n]["y"]), (x, y)))
+
 # ── Состояния роботов ─────────────────────────────────
 robots = {}
 for rid, rcfg in ROBOTS_CFG.items():
@@ -75,6 +78,7 @@ for rid, rcfg in ROBOTS_CFG.items():
         "yaw": 0.0,
         "status": "idle",
         "mission": [],
+        "target": None,
     }
 
 # ── ROS 2 нода ────────────────────────────────────────
@@ -148,6 +152,17 @@ async def ws_endpoint(ws: WebSocket):
                 if msg.get("type") == "cmd_vel":
                     rid = msg.get("robot_id")
                     node.send_cmd(rid, msg.get("linear", 0), msg.get("angular", 0))
+                if msg.get("type") == "resume":
+                    rid = msg.get("robot_id")
+                    target = robots.get(rid, {}).get("target")
+                    if target:
+                        cur = robots[rid]
+                        start = nearest_node(cur["x"], cur["y"])
+                        path = find_path(start, target)
+                        if path:
+                            robots[rid]["mission"] = path
+                            robots[rid]["status"] = "moving"
+                            node.send_order(rid, path)
             except asyncio.TimeoutError:
                 pass
             # Отправляем состояния всех роботов
@@ -170,6 +185,7 @@ async def order(payload: dict):
         return {"ok": False, "error": "no path"}
     robots[rid]["mission"] = path
     robots[rid]["status"] = "moving"
+    robots[rid]["target"] = target
     node.send_order(rid, path)
     return {"ok": True, "path": path}
 
