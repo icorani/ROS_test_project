@@ -46,15 +46,15 @@ except FileNotFoundError:
     WALLS_JSON = []
 
 # ── Dijkstra ──────────────────────────────────────────
-def find_path(start: str, goal: str, blocked_nodes=None, blocked_edges=None) -> list[str] | None:
+def find_path(start: str, goal: str, blocked_nodes=None, blocked_edges=None, robot_id=None) -> list[str] | None:
     if start not in POS or goal not in POS:
         return None
     if blocked_nodes is None:
         blocked_nodes = set()
     if blocked_edges is None:
         blocked_edges = set()
-    # Goal cannot be blocked, but start may be (robot already there, needs to leave)
-    if goal in blocked_nodes:
+    # Goal cannot be blocked (except by the requesting robot itself)
+    if goal in blocked_nodes and blocked_nodes_owner.get(goal) != robot_id:
         return None
     dist = {start: 0.0}
     prev = {}
@@ -66,13 +66,13 @@ def find_path(start: str, goal: str, blocked_nodes=None, blocked_edges=None) -> 
         if d > dist.get(u, float("inf")):
             continue
         # Don't expand from blocked intermediate nodes (but start may be blocked)
-        if u != start and u in blocked_nodes:
+        if u != start and u in blocked_nodes and blocked_nodes_owner.get(u) != robot_id:
             continue
         for v in ADJ.get(u, []):
-            if v in blocked_nodes:
+            if v in blocked_nodes and blocked_nodes_owner.get(v) != robot_id:
                 continue
             edge_key = tuple(sorted((u, v)))
-            if edge_key in blocked_edges:
+            if edge_key in blocked_edges and blocked_edges_owner.get(edge_key) != robot_id:
                 continue
             w = math.dist((POS[u]["x"], POS[u]["y"]), (POS[v]["x"], POS[v]["y"]))
             nd = d + w
@@ -123,6 +123,8 @@ blocked_edges = set()
 stuck_robots = set()  # robots marked as stuck/unrecoverable
 robot_blocked_nodes = {}  # robot_id -> set of nodes it blocked
 robot_blocked_edges = {}  # robot_id -> set of edges it blocked
+blocked_nodes_owner = {}  # node -> robot_id that blocked it
+blocked_edges_owner = {}  # edge -> robot_id that blocked it
 
 # ── Dark shop (Тёмный цех) ────────────────────────────
 dark_shop_enabled = False
@@ -198,10 +200,12 @@ class OrchestratorNode(Node):
                     robot_blocked_edges[rid] = set()
                     stuck_node = nearest_node(robots[rid]["x"], robots[rid]["y"])
                     blocked_nodes.add(stuck_node)
+                    blocked_nodes_owner[stuck_node] = rid
                     robot_blocked_nodes[rid].add(stuck_node)
                     for neighbor in ADJ.get(stuck_node, []):
                         edge_key = tuple(sorted((stuck_node, neighbor)))
                         blocked_edges.add(edge_key)
+                        blocked_edges_owner[edge_key] = rid
                         robot_blocked_edges[rid].add(edge_key)
                     self.get_logger().warn(f"Robot {rid} self-reported stuck at {stuck_node} - blocking area")
                 elif rid in stuck_robots and robots[rid]["status"] != "error":
@@ -311,7 +315,7 @@ async def do_dark_shop():
                 continue
             target = random.choice(candidates)
             cur = nearest_node(r["x"], r["y"])
-            path = find_path(cur, target, blocked_nodes=blocked_nodes, blocked_edges=blocked_edges)
+            path = find_path(cur, target, blocked_nodes=blocked_nodes, blocked_edges=blocked_edges, robot_id=rid)
             if path and len(path) > 2:  # Make it a long trip
                 r["mission"] = path
                 r["status"] = "moving"
@@ -345,12 +349,10 @@ async def ws_endpoint(ws: WebSocket):
                     node.send_cmd(rid, msg.get("linear", 0), msg.get("angular", 0))
                 elif msg.get("type") == "resume":
                     rid = msg.get("robot_id")
-                    if rid in stuck_robots:
-                        continue
                     target = robots.get(rid, {}).get("target")
                     if target and robots[rid].get("status") != "disconnected":
                         cur = nearest_node(robots[rid]["x"], robots[rid]["y"])
-                        path = find_path(cur, target, blocked_nodes=blocked_nodes, blocked_edges=blocked_edges)
+                        path = find_path(cur, target, blocked_nodes=blocked_nodes, blocked_edges=blocked_edges, robot_id=rid)
                         if path:
                             robots[rid]["mission"] = path
                             robots[rid]["status"] = "moving"
@@ -404,7 +406,7 @@ async def order(payload: dict):
             start = r["mission"][min(r.get("mission_idx", 0), len(r["mission"])-1)]
         else:
             start = nearest_node(r.get("x", 0), r.get("y", 0))
-    path = find_path(start, target, blocked_nodes=blocked_nodes, blocked_edges=blocked_edges)
+    path = find_path(start, target, blocked_nodes=blocked_nodes, blocked_edges=blocked_edges, robot_id=rid)
     if path is None:
         return {"ok": False, "error": "no_path"}
     robots[rid]["mission"] = path

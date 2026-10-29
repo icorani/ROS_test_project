@@ -108,6 +108,7 @@ class RobotDriver(Node):
             self.status = 'moving'
             self.manual_active = False
             self.error = None
+            self.last_movement_time = time.time()
             self.get_logger().info(f"New mission: {self.mission}")
         except Exception as e:
             self.get_logger().error(f"Bad order: {e}")
