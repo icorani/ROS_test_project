@@ -248,6 +248,7 @@ async def monitor_tasks():
         await asyncio.sleep(0.5)
 
 async def do_dark_shop():
+    global dark_shop_enabled
     # Give random long-distance orders to idle robots
     parking_nodes = list(PARKING.keys()) if PARKING else list(ALL_NODES.keys())
     for rid, r in robots.items():
@@ -270,6 +271,7 @@ async def do_dark_shop():
 
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
+    global dark_shop_enabled
     await ws.accept()
     await ws.send_text(json.dumps({"type": "map", "data": {
             "name": CFG["name"],
@@ -306,7 +308,6 @@ async def ws_endpoint(ws: WebSocket):
                     else:
                         robots[rid]["status"] = "idle"
                 elif msg.get("type") == "dark_shop":
-                    global dark_shop_enabled
                     dark_shop_enabled = bool(msg.get("enabled", False))
                     await ws.send_text(json.dumps({"type": "dark_shop_status", "enabled": dark_shop_enabled}))
                 elif msg.get("type") == "clear_stuck":
@@ -332,6 +333,7 @@ async def ws_endpoint(ws: WebSocket):
 
 @app.post("/order")
 async def order(payload: dict):
+    global dark_shop_enabled
     rid = payload.get("robot_id", "robot_1")
     target = payload.get("target")
     start = payload.get("start")

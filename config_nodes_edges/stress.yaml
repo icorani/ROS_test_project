@@ -28,9 +28,6 @@ nodes:
   R2: {x: 10, y: 2}
   R3: {x: 10, y: 0}  # bottom of right corridor
   
-  # Top of right side
-  T1: {x: 8, y: 8}  # connected to R1 area
-  
 parking:
   P1: {x: 12, y: 8}
   P2: {x: 12, y: 6}
@@ -63,8 +60,7 @@ edges:
   - [L6, M6]
   
   # Right side vertical corridor going down from top
-  - [T1, R1]  # top right horizontal connection
-  - [R1, L6]  # connects to main grid? Or separate branch
+  - [R1, L6]  # connects to main grid
   - [R1, P1]
   - [L6, P2]
   - [M6, P3]

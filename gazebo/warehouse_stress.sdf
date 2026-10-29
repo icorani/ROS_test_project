@@ -57,15 +57,6 @@
           <material><ambient>0.6 0.6 0.6 1</ambient></material></visual>
       </link>
     </model>
-    <model name="inner_h_L5_T1">
-      <static>true</static>
-      <pose>8 7.0 0.5 0 0 0</pose>
-      <link name="link">
-        <collision name="collision"><geometry><box><size>2.0 0.3 1.0</size></box></geometry></collision>
-        <visual name="visual"><geometry><box><size>2.0 0.3 1.0</size></box></geometry>
-          <material><ambient>0.6 0.6 0.6 1</ambient></material></visual>
-      </link>
-    </model>
     <model name="inner_h_P1_P2">
       <static>true</static>
       <pose>12 7.0 0.5 0 0 0</pose>
