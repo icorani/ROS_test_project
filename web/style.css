@@ -1,0 +1,155 @@
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            background: #1a1a1a;
+            overflow: hidden;
+        }
+
+        canvas {
+            display: block;
+        }
+
+        #status {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            color: #4af;
+            font-family: monospace;
+            font-size: 14px;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 6px 10px;
+            border-radius: 4px;
+        }
+
+        #robot-table {
+            position: fixed;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.75);
+            color: #ddd;
+            font-family: monospace;
+            font-size: 14px;
+            border-radius: 4px;
+            padding: 10px 14px;
+            max-height: 40vh;
+            overflow-y: auto;
+        }
+
+        #robot-table table {
+            border-collapse: collapse;
+        }
+
+        #robot-table th, #robot-table td {
+            padding: 4px 10px;
+            text-align: left;
+            border-bottom: 1px solid #333;
+        }
+
+        #robot-table th {
+            color: #888;
+            font-weight: normal;
+        }
+
+        #robot-table td.status-idle {
+            color: #4af;
+        }
+
+        #robot-table td.status-moving {
+            color: #4f4;
+        }
+
+        #robot-table td.status-done {
+            color: #ff4;
+        }
+
+        #robot-table td.status-error {
+            color: #f44;
+        }
+
+        #robot-table td.status-manual {
+            color: #f4a;
+        }
+
+        #robot-table tr.selected {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        #robot-table td.mission {
+            white-space: nowrap;
+            font-size: 13px;
+        }
+
+        #robot-table td.mission .current {
+            font-weight: bold;
+            color: #ff4;
+        }
+
+        #robot-table td.mission .done {
+            color: #4f4;
+        }
+
+        .ctrl-btn {
+            background: #333;
+            color: #ddd;
+            border: 1px solid #555;
+            padding: 2px 8px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-family: monospace;
+            font-size: 12px;
+        }
+
+        .ctrl-btn:hover {
+            background: #444;
+        }
+
+        .ctrl-btn.active {
+            background: #a33;
+            color: #fff;
+        }
+
+        #coords {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.8);
+            color: #fff;
+            font-family: monospace;
+            padding: 12px 18px;
+            border-radius: 6px;
+            font-size: 22px;
+            line-height: 1.4;
+            border: 2px solid #4af;
+        }
+
+        #coords.manual {
+            border-color: #f44;
+        }
+
+        #coords .label {
+            color: #888;
+            font-size: 14px;
+        }
+
+        #coords .val {
+            color: #4af;
+        }
+
+        #coords.manual .val {
+            color: #f44;
+        }
+
+        #help {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            color: #aaa;
+            font-family: monospace;
+            font-size: 12px;
+            padding: 8px 12px;
+            border-radius: 4px;
+        }
+    </style>
