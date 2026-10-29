@@ -37,6 +37,9 @@ class RobotDriver(Node):
         self.x = 0.0
         self.y = 0.0
         self.yaw = 0.0
+        self.last_x = 0.0
+        self.last_y = 0.0
+        self.last_movement_time = time.time()
 
         # Миссия
         self.mission = []
@@ -48,6 +51,9 @@ class RobotDriver(Node):
         self.manual_angular = 0.0
         self.manual_active = False
         self.last_cmd_time = 0.0
+
+        # Ошибки
+        self.error = None
 
         # Публикаторы в Gazebo (через мост)
         self.pub_left = self.create_publisher(
@@ -69,23 +75,42 @@ class RobotDriver(Node):
         self.get_logger().info(f"Robot {self.robot_id} started at ({self.start_x}, {self.start_y})")
 
     def odom_cb(self, msg):
+        old_x, old_y = self.x, self.y
         self.x = msg.pose.pose.position.x
         self.y = msg.pose.pose.position.y
         q = msg.pose.pose.orientation
         siny = 2.0 * (q.w * q.z + q.x * q.y)
         cosy = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
         self.yaw = math.atan2(siny, cosy)
+        # Track movement
+        if math.hypot(self.x - old_x, self.y - old_y) > 0.001:
+            self.last_movement_time = time.time()
 
     def order_cb(self, msg):
         try:
             data = json.loads(msg.data)
-            self.mission = data.get('path', [])
+            path = data.get('path', [])
+            if not path:
+                self.error = "no_path"
+                self.status = 'error'
+                return
+            # Check if any node exists
+            for node in path:
+                if node not in self.node_coords:
+                    self.error = "node_not_found"
+                    self.status = 'error'
+                    self.get_logger().error(f"Unknown node {node}")
+                    return
+            self.mission = path
             self.mission_idx = 0
             self.status = 'moving'
             self.manual_active = False
+            self.error = None
             self.get_logger().info(f"New mission: {self.mission}")
         except Exception as e:
             self.get_logger().error(f"Bad order: {e}")
+            self.error = "bad_order"
+            self.status = 'error'
 
     def cmd_vel_cb(self, msg):
         # Ручное управление
@@ -94,12 +119,28 @@ class RobotDriver(Node):
         self.manual_active = True
         self.last_cmd_time = time.time()
         self.status = 'manual'
+        self.error = None
 
     def control_loop(self):
+        now = time.time()
         # Таймаут ручного управления (0.5 сек без cmd_vel → idle)
-        if self.manual_active and (time.time() - self.last_cmd_time) > 0.5:
+        if self.manual_active and (now - self.last_cmd_time) > 0.5:
             self.manual_active = False
             self.status = 'idle'
+
+        # Check if too far from any node/edge
+        if self.status in ['moving', 'manual']:
+            nearest = min(self.node_coords.keys(), key=lambda n: math.hypot(self.node_coords[n]['x'] - self.x, self.node_coords[n]['y'] - self.y))
+            dist_to_nearest = math.hypot(self.node_coords[nearest]['x'] - self.x, self.node_coords[nearest]['y'] - self.y)
+            if dist_to_nearest > 3.0:  # Too far from graph
+                self.error = "too_far_from_graph"
+                self.status = 'error'
+
+        # Check if stuck (no movement for long time while supposed to move)
+        if self.status == 'moving' and (now - self.last_movement_time) > 3.0:
+            self.error = "stuck_in_obstacle"
+            # Don't set error status immediately, let orchestrator decide
+            # but report it
 
         # Публикуем состояние
         state = {
@@ -110,6 +151,9 @@ class RobotDriver(Node):
             'status': self.status,
             'mission': self.mission,
             'mission_idx': self.mission_idx,
+            'linear': self.manual_linear if self.manual_active else 0.0,
+            'angular': self.manual_angular if self.manual_active else 0.0,
+            'error': self.error,
         }
         self.pub_state.publish(String(data=json.dumps(state)))
 
@@ -133,7 +177,10 @@ class RobotDriver(Node):
         target_id = self.mission[self.mission_idx]
         if target_id not in self.node_coords:
             self.get_logger().warn(f"Unknown node {target_id}")
+            self.error = "node_not_found"
             self.status = 'error'
+            self.pub_left.publish(Float64(data=0.0))
+            self.pub_right.publish(Float64(data=0.0))
             return
 
         tx = self.node_coords[target_id]['x']
@@ -143,25 +190,28 @@ class RobotDriver(Node):
         dy = ty - self.y
         dist = math.hypot(dx, dy)
 
-        if dist < 0.1:
+        if dist < 0.12:
             self.mission_idx += 1
             if self.mission_idx >= len(self.mission):
                 self.status = 'done'
+                self.error = None
                 self.pub_left.publish(Float64(data=0.0))
                 self.pub_right.publish(Float64(data=0.0))
             return
 
         target_yaw = math.atan2(dy, dx)
         angle_err = target_yaw - self.yaw
-        while angle_err > math.pi: angle_err -= 2 * math.pi
-        while angle_err < -math.pi: angle_err += 2 * math.pi
+        while angle_err > math.pi:
+            angle_err -= 2 * math.pi
+        while angle_err < -math.pi:
+            angle_err += 2 * math.pi
 
-        if abs(angle_err) > 0.3:
+        if abs(angle_err) > 0.4:
             v = 0.0
-            w = 1.5 if angle_err > 0 else -1.5
+            w = 1.8 if angle_err > 0 else -1.8
         else:
-            v = 0.3
-            w = 2.0 * angle_err
+            v = 0.35
+            w = 2.2 * angle_err
 
         v_left = (v - w * self.L / 2.0) / self.r
         v_right = (v + w * self.L / 2.0) / self.r * self.K

@@ -4,6 +4,8 @@ import math
 import os
 import yaml
 import heapq
+import random
+import time
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Response
 from fastapi.middleware.cors import CORSMiddleware
 import rclpy
@@ -36,18 +38,22 @@ for a, b in EDGES:
         ADJ[b].append(a)
 
 # ── Loading walls ──────────────────────────────────────────
-import json as jsonlib
-
 WALLS_PATH = f"/configs/walls_{MAP_NAME}.json"
 try:
     with open(WALLS_PATH) as f:
-        WALLS_JSON = jsonlib.load(f)
+        WALLS_JSON = json.load(f)
 except FileNotFoundError:
     WALLS_JSON = []
 
 # ── Dijkstra ──────────────────────────────────────────
-def find_path(start: str, goal: str) -> list[str] | None:
+def find_path(start: str, goal: str, blocked_nodes=None, blocked_edges=None) -> list[str] | None:
     if start not in POS or goal not in POS:
+        return None
+    if blocked_nodes is None:
+        blocked_nodes = set()
+    if blocked_edges is None:
+        blocked_edges = set()
+    if start in blocked_nodes or goal in blocked_nodes:
         return None
     dist = {start: 0.0}
     prev = {}
@@ -58,7 +64,14 @@ def find_path(start: str, goal: str) -> list[str] | None:
             break
         if d > dist.get(u, float("inf")):
             continue
+        if u in blocked_nodes:
+            continue
         for v in ADJ.get(u, []):
+            if v in blocked_nodes:
+                continue
+            edge_key = tuple(sorted((u, v)))
+            if edge_key in blocked_edges:
+                continue
             w = math.dist((POS[u]["x"], POS[u]["y"]), (POS[v]["x"], POS[v]["y"]))
             nd = d + w
             if nd < dist.get(v, float("inf")):
@@ -88,8 +101,33 @@ for rid, rcfg in ROBOTS_CFG.items():
         "yaw": 0.0,
         "status": "idle",
         "mission": [],
+        "mission_idx": 0,
         "target": None,
+        "linear": 0.0,
+        "angular": 0.0,
+        "error": None,
+        "last_update": time.time(),
+        "stuck_count": 0,
+        "last_x": rcfg.get("start_x", 0),
+        "last_y": rcfg.get("start_y", 0),
+        "stuck_since": None,
     }
+
+# ── Блокировки ────────────────────────────────────────
+node_reservations = {}  # node -> {robot_id, expires}
+edge_reservations = {}  # (a,b) sorted -> {robot_id, expires}
+blocked_nodes = set()  # permanently blocked (stuck robot)
+blocked_edges = set()
+stuck_robots = set()  # robots marked as stuck/unrecoverable
+
+# ── Dark shop (Тёмный цех) ────────────────────────────
+dark_shop_enabled = False
+DARK_SHOP_INTERVAL = 3.0  # seconds
+last_dark_shop = time.time()
+
+# ── Connection loss tracking ─────────────────────────
+CONNECTION_TIMEOUT = 2.5  # seconds without update
+THROTTLE_THRESHOLD = 0.5  # warn if updates come too fast
 
 # ── ROS 2 нода ────────────────────────────────────────
 class OrchestratorNode(Node):
@@ -106,26 +144,62 @@ class OrchestratorNode(Node):
         def cb(msg):
             try:
                 data = json.loads(msg.data)
+                now = time.time()
+                prev = robots.get(rid, {})
                 robots[rid].update({
-                    "x": data.get("x", 0),
-                    "y": data.get("y", 0),
-                    "yaw": data.get("yaw", 0),
-                    "status": data.get("status", "idle"),
-                    "mission": data.get("mission", []),
-                    "mission_idx": data.get("mission_idx", 0),
+                    "x": data.get("x", prev.get("x", 0)),
+                    "y": data.get("y", prev.get("y", 0)),
+                    "yaw": data.get("yaw", prev.get("yaw", 0)),
+                    "status": data.get("status", prev.get("status", "idle")),
+                    "mission": data.get("mission", prev.get("mission", [])),
+                    "mission_idx": data.get("mission_idx", prev.get("mission_idx", 0)),
+                    "linear": data.get("linear", 0.0),
+                    "angular": data.get("angular", 0.0),
+                    "error": data.get("error"),
+                    "last_update": now,
                 })
+                # Check for stuck
+                if robots[rid]["status"] == "moving" and robots[rid].get("mission"):
+                    last_x = prev.get("x", robots[rid]["x"])
+                    last_y = prev.get("y", robots[rid]["y"])
+                    dist_moved = math.hypot(robots[rid]["x"] - last_x, robots[rid]["y"] - last_y)
+                    if dist_moved < 0.01:
+                        robots[rid]["stuck_count"] = robots[rid].get("stuck_count", 0) + 1
+                        if robots[rid].get("stuck_since") is None:
+                            robots[rid]["stuck_since"] = now
+                    else:
+                        robots[rid]["stuck_count"] = 0
+                        robots[rid]["stuck_since"] = None
+                    # If stuck for too long while moving -> mark as stuck/unrecoverable
+                    if robots[rid]["stuck_count"] > 40:  # ~2 seconds at 20Hz
+                        if rid not in stuck_robots:
+                            stuck_robots.add(rid)
+                            # Block the node/area where it's stuck
+                            stuck_node = nearest_node(robots[rid]["x"], robots[rid]["y"])
+                            blocked_nodes.add(stuck_node)
+                            # Also block adjacent edges
+                            for neighbor in ADJ.get(stuck_node, []):
+                                edge_key = tuple(sorted((stuck_node, neighbor)))
+                                blocked_edges.add(edge_key)
+                            self.get_logger().warn(f"Robot {rid} stuck at {stuck_node} - blocking area")
+                else:
+                    robots[rid]["stuck_count"] = 0
+                    robots[rid]["stuck_since"] = None
             except Exception as e:
                 self.get_logger().error(f"Bad state from {rid}: {e}")
         return cb
 
     def send_order(self, rid, path):
-        if rid in self.publishers_order:
+        if rid in self.publishers_order and rid not in stuck_robots:
             msg = String()
             msg.data = json.dumps({"path": path})
             self.publishers_order[rid].publish(msg)
 
     def send_cmd(self, rid, linear, angular):
         self.get_logger().info(f"send_cmd: rid={rid}, linear={linear}, angular={angular}")
+        if rid in stuck_robots:
+            self.get_logger().warn(f"Cannot send cmd to stuck robot {rid}")
+            return
         if rid in self.publishers_cmd:
             msg = Twist()
             msg.linear.x = float(linear)
@@ -140,11 +214,59 @@ node = OrchestratorNode()
 @app.on_event("startup")
 async def startup():
     asyncio.create_task(spin())
+    asyncio.create_task(monitor_tasks())
 
 async def spin():
     while rclpy.ok():
         rclpy.spin_once(node, timeout_sec=0.05)
         await asyncio.sleep(0.01)
+
+async def monitor_tasks():
+    global dark_shop_enabled, last_dark_shop
+    while True:
+        try:
+            now = time.time()
+            # Check connection loss
+            for rid, r in robots.items():
+                if now - r.get("last_update", 0) > CONNECTION_TIMEOUT:
+                    if r.get("status") != "disconnected":
+                        r["status"] = "disconnected"
+                        r["error"] = "connection_lost"
+            # Clean expired reservations
+            expired_nodes = [n for n, res in node_reservations.items() if res["expires"] < now]
+            for n in expired_nodes:
+                del node_reservations[n]
+            expired_edges = [e for e, res in edge_reservations.items() if res["expires"] < now]
+            for e in expired_edges:
+                del edge_reservations[e]
+            # Dark shop
+            if dark_shop_enabled and now - last_dark_shop > DARK_SHOP_INTERVAL:
+                await do_dark_shop()
+                last_dark_shop = now
+        except Exception as e:
+            print(f"Monitor error: {e}")
+        await asyncio.sleep(0.5)
+
+async def do_dark_shop():
+    # Give random long-distance orders to idle robots
+    parking_nodes = list(PARKING.keys()) if PARKING else list(ALL_NODES.keys())
+    for rid, r in robots.items():
+        if rid in stuck_robots:
+            continue
+        if r.get("status") in ["idle", "done"] and (time.time() - r.get("last_update", 0) < CONNECTION_TIMEOUT):
+            # Pick random distant target
+            candidates = [n for n in parking_nodes + list(NODES.keys()) if n != nearest_node(r["x"], r["y"])]
+            if not candidates:
+                continue
+            target = random.choice(candidates)
+            cur = nearest_node(r["x"], r["y"])
+            path = find_path(cur, target, blocked_nodes=blocked_nodes, blocked_edges=blocked_edges)
+            if path and len(path) > 2:  # Make it a long trip
+                r["mission"] = path
+                r["status"] = "moving"
+                r["target"] = target
+                node.send_order(rid, path)
+                break  # Send to one robot at a time
 
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
@@ -155,34 +277,53 @@ async def ws_endpoint(ws: WebSocket):
             "nodes": POS,
             "edges": EDGES,
             "robots": ROBOTS_CFG,
-            "walls": WALLS_JSON,   
+            "walls": WALLS_JSON,
+            "blocked_nodes": list(blocked_nodes),
+            "blocked_edges": [list(e) for e in blocked_edges],
+            "dark_shop": dark_shop_enabled,
+            "stuck_robots": list(stuck_robots),
         }}))
     try:
         while True:
-            # Принимаем сообщения от Canvas
             try:
                 msg_text = await asyncio.wait_for(ws.receive_text(), timeout=0.1)
                 msg = json.loads(msg_text)
                 if msg.get("type") == "cmd_vel":
                     rid = msg.get("robot_id")
                     node.send_cmd(rid, msg.get("linear", 0), msg.get("angular", 0))
-                if msg.get("type") == "resume":
+                elif msg.get("type") == "resume":
                     rid = msg.get("robot_id")
+                    if rid in stuck_robots:
+                        continue
                     target = robots.get(rid, {}).get("target")
-                    if target:
-                        cur = robots[rid]
-                        start = nearest_node(cur["x"], cur["y"])
-                        path = find_path(start, target)
+                    if target and robots[rid].get("status") != "disconnected":
+                        cur = nearest_node(robots[rid]["x"], robots[rid]["y"])
+                        path = find_path(cur, target, blocked_nodes=blocked_nodes, blocked_edges=blocked_edges)
                         if path:
                             robots[rid]["mission"] = path
                             robots[rid]["status"] = "moving"
                             node.send_order(rid, path)
                     else:
                         robots[rid]["status"] = "idle"
+                elif msg.get("type") == "dark_shop":
+                    global dark_shop_enabled
+                    dark_shop_enabled = bool(msg.get("enabled", False))
+                    await ws.send_text(json.dumps({"type": "dark_shop_status", "enabled": dark_shop_enabled}))
+                elif msg.get("type") == "clear_stuck":
+                    rid = msg.get("robot_id")
+                    if rid in stuck_robots:
+                        stuck_robots.discard(rid)
+                    # Don't auto-clear blocked nodes/edges as per requirement
             except asyncio.TimeoutError:
                 pass
-            # Отправляем состояния всех роботов
-            await ws.send_text(json.dumps({"type": "state", "robots": list(robots.values())}))
+            await ws.send_text(json.dumps({
+                "type": "state", 
+                "robots": list(robots.values()),
+                "blocked_nodes": list(blocked_nodes),
+                "blocked_edges": [list(e) for e in blocked_edges],
+                "dark_shop": dark_shop_enabled,
+                "stuck_robots": list(stuck_robots),
+            }))
             await asyncio.sleep(0.05)
     except WebSocketDisconnect:
         pass
@@ -194,11 +335,19 @@ async def order(payload: dict):
     rid = payload.get("robot_id", "robot_1")
     target = payload.get("target")
     start = payload.get("start")
+    if rid in stuck_robots:
+        return {"ok": False, "error": "robot_stuck_blocked"}
+    if time.time() - robots.get(rid, {}).get("last_update", 0) > CONNECTION_TIMEOUT:
+        return {"ok": False, "error": "connection_lost"}
     if start is None:
-        start = robots.get(rid, {}).get("mission", [None])[0] or list(POS.keys())[0]
-    path = find_path(start, target)
+        r = robots.get(rid, {})
+        if r.get("mission"):
+            start = r["mission"][min(r.get("mission_idx", 0), len(r["mission"])-1)]
+        else:
+            start = nearest_node(r.get("x", 0), r.get("y", 0))
+    path = find_path(start, target, blocked_nodes=blocked_nodes, blocked_edges=blocked_edges)
     if path is None:
-        return {"ok": False, "error": "no path"}
+        return {"ok": False, "error": "no_path"}
     robots[rid]["mission"] = path
     robots[rid]["status"] = "moving"
     robots[rid]["target"] = target
@@ -207,9 +356,8 @@ async def order(payload: dict):
 
 @app.get("/state")
 async def state(pretty: bool = False):
-    data = {"robots": list(robots.values())}
+    data = {"robots": list(robots.values()), "blocked_nodes": list(blocked_nodes), "dark_shop": dark_shop_enabled}
     if pretty:
-        import json
         return Response(
             content=json.dumps(data, indent=2, ensure_ascii=False),
             media_type="application/json; charset=utf-8"
@@ -218,4 +366,4 @@ async def state(pretty: bool = False):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "map": MAP_NAME, "robots": list(robots.keys())}
+    return {"status": "ok", "map": MAP_NAME, "robots": list(robots.keys()), "dark_shop": dark_shop_enabled}
