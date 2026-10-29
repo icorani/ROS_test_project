@@ -181,6 +181,15 @@ class OrchestratorNode(Node):
                                 edge_key = tuple(sorted((stuck_node, neighbor)))
                                 blocked_edges.add(edge_key)
                             self.get_logger().warn(f"Robot {rid} stuck at {stuck_node} - blocking area")
+                elif robots[rid]["status"] == "error" and rid not in stuck_robots:
+                    # Robot reported itself as stuck (error status)
+                    stuck_robots.add(rid)
+                    stuck_node = nearest_node(robots[rid]["x"], robots[rid]["y"])
+                    blocked_nodes.add(stuck_node)
+                    for neighbor in ADJ.get(stuck_node, []):
+                        edge_key = tuple(sorted((stuck_node, neighbor)))
+                        blocked_edges.add(edge_key)
+                    self.get_logger().warn(f"Robot {rid} self-reported stuck at {stuck_node} - blocking area")
                 elif robots[rid]["status"] in ["idle", "done"] and rid in stuck_robots and not robots[rid].get("error"):
                     stuck_robots.discard(rid)
                     robots[rid]["stuck_count"] = 0

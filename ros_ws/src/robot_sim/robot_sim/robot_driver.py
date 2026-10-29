@@ -139,8 +139,7 @@ class RobotDriver(Node):
         # Check if stuck (no movement for long time while supposed to move)
         if self.status == 'moving' and (now - self.last_movement_time) > 3.0:
             self.error = "stuck_in_obstacle"
-            # Don't set error status immediately, let orchestrator decide
-            # but report it
+            self.status = 'error'
 
         # Публикуем состояние
         state = {
@@ -157,7 +156,7 @@ class RobotDriver(Node):
         }
         self.pub_state.publish(String(data=json.dumps(state)))
 
-        # Ручное управление
+        # Ручное управление всегда имеет приоритет
         if self.manual_active:
             v = self.manual_linear
             w = self.manual_angular
@@ -168,7 +167,7 @@ class RobotDriver(Node):
             return
 
         # Автономное движение по миссии
-        if self.status != 'moving' or not self.mission:
+        if self.status != 'moving' or not self.mission or self.status == 'error':
             self.pub_left.publish(Float64(data=0.0))
             self.pub_right.publish(Float64(data=0.0))
             return
