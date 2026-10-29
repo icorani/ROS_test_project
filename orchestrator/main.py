@@ -4,7 +4,7 @@ import math
 import os
 import yaml
 import heapq
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Response
 from fastapi.middleware.cors import CORSMiddleware
 import rclpy
 from rclpy.node import Node
@@ -206,8 +206,15 @@ async def order(payload: dict):
     return {"ok": True, "path": path}
 
 @app.get("/state")
-async def state():
-    return {"robots": list(robots.values())}
+async def state(pretty: bool = False):
+    data = {"robots": list(robots.values())}
+    if pretty:
+        import json
+        return Response(
+            content=json.dumps(data, indent=2, ensure_ascii=False),
+            media_type="application/json; charset=utf-8"
+        )
+    return data
 
 @app.get("/health")
 async def health():
