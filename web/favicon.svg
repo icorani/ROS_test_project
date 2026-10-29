@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="12" fill="#1a1a1a"/>
+  <!-- Стены склада -->
+  <rect x="10" y="14" width="44" height="36" fill="none" stroke="#888" stroke-width="3"/>
+  <!-- Робот -->
+  <rect x="26" y="30" width="12" height="10" rx="2" fill="#4af"/>
+  <circle cx="29" cy="35" r="1.5" fill="#fff"/>
+  <circle cx="35" cy="35" r="1.5" fill="#fff"/>
+  <!-- Колёса -->
+  <rect x="24" y="42" width="4" height="3" rx="1" fill="#ddd"/>
+  <rect x="36" y="42" width="4" height="3" rx="1" fill="#ddd"/>
+  <!-- Ось Y (зелёная) -->
+  <line x1="10" y1="50" x2="54" y2="50" stroke="#4f4" stroke-width="1.5" opacity="0.5"/>
+  <!-- Ось X (красная) -->
+  <line x1="10" y1="14" x2="10" y2="50" stroke="#f44" stroke-width="1.5" opacity="0.5"/>
+</svg>
