@@ -177,11 +177,14 @@ class OrchestratorNode(Node):
                             # Block the node/area where it's stuck
                             stuck_node = nearest_node(robots[rid]["x"], robots[rid]["y"])
                             blocked_nodes.add(stuck_node)
-                            # Also block adjacent edges
                             for neighbor in ADJ.get(stuck_node, []):
                                 edge_key = tuple(sorted((stuck_node, neighbor)))
                                 blocked_edges.add(edge_key)
                             self.get_logger().warn(f"Robot {rid} stuck at {stuck_node} - blocking area")
+                elif robots[rid]["status"] in ["idle", "done"] and rid in stuck_robots and not robots[rid].get("error"):
+                    stuck_robots.discard(rid)
+                    robots[rid]["stuck_count"] = 0
+                    robots[rid]["stuck_since"] = None
                 else:
                     robots[rid]["stuck_count"] = 0
                     robots[rid]["stuck_since"] = None
@@ -190,6 +193,9 @@ class OrchestratorNode(Node):
         return cb
 
     def send_order(self, rid, path):
+        r = robots.get(rid, {})
+        if r.get("status") in ["idle", "done"] and rid in stuck_robots:
+            stuck_robots.discard(rid)
         if rid in self.publishers_order and rid not in stuck_robots:
             msg = String()
             msg.data = json.dumps({"path": path})
@@ -333,12 +339,13 @@ async def ws_endpoint(ws: WebSocket):
 
 @app.post("/order")
 async def order(payload: dict):
-    global dark_shop_enabled
     rid = payload.get("robot_id", "robot_1")
     target = payload.get("target")
     start = payload.get("start")
-    if rid in stuck_robots:
+    if rid in stuck_robots and robots.get(rid, {}).get("status") not in ["idle", "done"]:
         return {"ok": False, "error": "robot_stuck_blocked"}
+    if rid in stuck_robots and robots.get(rid, {}).get("status") in ["idle", "done"]:
+        stuck_robots.discard(rid)
     if time.time() - robots.get(rid, {}).get("last_update", 0) > CONNECTION_TIMEOUT:
         return {"ok": False, "error": "connection_lost"}
     if start is None:

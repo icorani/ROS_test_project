@@ -428,6 +428,9 @@ document.getElementById('robot-table-body').addEventListener('click', (e) => {
                 body: JSON.stringify({robot_id: rid, target: target})
             }).then(r => r.json()).then(data => {
                 console.log('order result', data);
+                if (data && data.ok === false && data.error === 'robot_stuck_blocked') {
+                    alert('Робот заблокирован как застрявший. Нажми "Управлять"->"Выход" или дождись сброса.');
+                }
             }).catch(err => console.error(err));
         }
         return;
