@@ -40,6 +40,7 @@ class RobotDriver(Node):
         self.last_x = 0.0
         self.last_y = 0.0
         self.last_movement_time = time.time()
+        self.odom_received = False
 
         # Миссия
         self.mission = []
@@ -82,6 +83,7 @@ class RobotDriver(Node):
         siny = 2.0 * (q.w * q.z + q.x * q.y)
         cosy = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
         self.yaw = math.atan2(siny, cosy)
+        self.odom_received = True
         # Track movement
         if math.hypot(self.x - old_x, self.y - old_y) > 0.001:
             self.last_movement_time = time.time()
@@ -128,8 +130,8 @@ class RobotDriver(Node):
             self.manual_active = False
             self.status = 'idle'
 
-        # Check if too far from any node/edge
-        if self.status in ['moving', 'manual']:
+        # Check if too far from any node/edge (only after we have odom)
+        if self.odom_received and self.status in ['moving', 'manual']:
             nearest = min(self.node_coords.keys(), key=lambda n: math.hypot(self.node_coords[n]['x'] - self.x, self.node_coords[n]['y'] - self.y))
             dist_to_nearest = math.hypot(self.node_coords[nearest]['x'] - self.x, self.node_coords[nearest]['y'] - self.y)
             if dist_to_nearest > 3.0:  # Too far from graph

@@ -53,7 +53,8 @@ def find_path(start: str, goal: str, blocked_nodes=None, blocked_edges=None) -> 
         blocked_nodes = set()
     if blocked_edges is None:
         blocked_edges = set()
-    if start in blocked_nodes or goal in blocked_nodes:
+    # Goal cannot be blocked, but start may be (robot already there, needs to leave)
+    if goal in blocked_nodes:
         return None
     dist = {start: 0.0}
     prev = {}
@@ -64,7 +65,8 @@ def find_path(start: str, goal: str, blocked_nodes=None, blocked_edges=None) -> 
             break
         if d > dist.get(u, float("inf")):
             continue
-        if u in blocked_nodes:
+        # Don't expand from blocked intermediate nodes (but start may be blocked)
+        if u != start and u in blocked_nodes:
             continue
         for v in ADJ.get(u, []):
             if v in blocked_nodes:
@@ -119,6 +121,8 @@ edge_reservations = {}  # (a,b) sorted -> {robot_id, expires}
 blocked_nodes = set()  # permanently blocked (stuck robot)
 blocked_edges = set()
 stuck_robots = set()  # robots marked as stuck/unrecoverable
+robot_blocked_nodes = {}  # robot_id -> set of nodes it blocked
+robot_blocked_edges = {}  # robot_id -> set of edges it blocked
 
 # ── Dark shop (Тёмный цех) ────────────────────────────
 dark_shop_enabled = False
@@ -170,6 +174,12 @@ class OrchestratorNode(Node):
                     else:
                         robots[rid]["stuck_count"] = 0
                         robots[rid]["stuck_since"] = None
+                        if rid in stuck_robots:
+                            stuck_robots.discard(rid)
+                            for n in robot_blocked_nodes.pop(rid, []):
+                                blocked_nodes.discard(n)
+                            for e in robot_blocked_edges.pop(rid, []):
+                                blocked_edges.discard(e)
                     # If stuck for too long while moving -> mark as stuck/unrecoverable
                     if robots[rid]["stuck_count"] > 40:  # ~2 seconds at 20Hz
                         if rid not in stuck_robots:
@@ -184,16 +194,34 @@ class OrchestratorNode(Node):
                 elif robots[rid]["status"] == "error" and rid not in stuck_robots:
                     # Robot reported itself as stuck (error status)
                     stuck_robots.add(rid)
+                    robot_blocked_nodes[rid] = set()
+                    robot_blocked_edges[rid] = set()
                     stuck_node = nearest_node(robots[rid]["x"], robots[rid]["y"])
                     blocked_nodes.add(stuck_node)
+                    robot_blocked_nodes[rid].add(stuck_node)
                     for neighbor in ADJ.get(stuck_node, []):
                         edge_key = tuple(sorted((stuck_node, neighbor)))
                         blocked_edges.add(edge_key)
+                        robot_blocked_edges[rid].add(edge_key)
                     self.get_logger().warn(f"Robot {rid} self-reported stuck at {stuck_node} - blocking area")
+                elif rid in stuck_robots and robots[rid]["status"] != "error":
+                    # Robot recovered from stuck state (moving/idle/done without error)
+                    stuck_robots.discard(rid)
+                    robots[rid]["stuck_count"] = 0
+                    robots[rid]["stuck_since"] = None
+                    # Release this robot's blocked nodes/edges
+                    for n in robot_blocked_nodes.pop(rid, []):
+                        blocked_nodes.discard(n)
+                    for e in robot_blocked_edges.pop(rid, []):
+                        blocked_edges.discard(e)
                 elif robots[rid]["status"] in ["idle", "done"] and rid in stuck_robots and not robots[rid].get("error"):
                     stuck_robots.discard(rid)
                     robots[rid]["stuck_count"] = 0
                     robots[rid]["stuck_since"] = None
+                    for n in robot_blocked_nodes.pop(rid, []):
+                        blocked_nodes.discard(n)
+                    for e in robot_blocked_edges.pop(rid, []):
+                        blocked_edges.discard(e)
                 else:
                     robots[rid]["stuck_count"] = 0
                     robots[rid]["stuck_since"] = None
@@ -205,7 +233,14 @@ class OrchestratorNode(Node):
         r = robots.get(rid, {})
         if r.get("status") in ["idle", "done"] and rid in stuck_robots:
             stuck_robots.discard(rid)
-        if rid in self.publishers_order and rid not in stuck_robots:
+            robots[rid]["stuck_count"] = 0
+            robots[rid]["stuck_since"] = None
+            for n in robot_blocked_nodes.pop(rid, []):
+                blocked_nodes.discard(n)
+            for e in robot_blocked_edges.pop(rid, []):
+                blocked_edges.discard(e)
+        # Always send order to allow recovery from stuck state
+        if rid in self.publishers_order:
             msg = String()
             msg.data = json.dumps({"path": path})
             self.publishers_order[rid].publish(msg)
@@ -351,10 +386,16 @@ async def order(payload: dict):
     rid = payload.get("robot_id", "robot_1")
     target = payload.get("target")
     start = payload.get("start")
-    if rid in stuck_robots and robots.get(rid, {}).get("status") not in ["idle", "done"]:
-        return {"ok": False, "error": "robot_stuck_blocked"}
-    if rid in stuck_robots and robots.get(rid, {}).get("status") in ["idle", "done"]:
+    # Release stuck robot's blocked resources before pathfinding so it can recover
+    if rid in stuck_robots:
         stuck_robots.discard(rid)
+        robots[rid]["stuck_count"] = 0
+        robots[rid]["stuck_since"] = None
+        robots[rid]["error"] = None
+        for n in robot_blocked_nodes.pop(rid, []):
+            blocked_nodes.discard(n)
+        for e in robot_blocked_edges.pop(rid, []):
+            blocked_edges.discard(e)
     if time.time() - robots.get(rid, {}).get("last_update", 0) > CONNECTION_TIMEOUT:
         return {"ok": False, "error": "connection_lost"}
     if start is None:
