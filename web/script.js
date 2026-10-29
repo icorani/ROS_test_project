@@ -199,15 +199,56 @@ function drawRobot(r) {
     ctx.fillText(r.id, px + 15, py - 15);
 }
 
-// ── Таблица ───────────────────────────────────────────
-function updateRobotTable(robotsList) {
-    const tbody = document.getElementById('robot-table-body');
-    tbody.innerHTML = '';
-    robotsList.forEach(r => {
-        const tr = document.createElement('tr');
-        tr.dataset.robotId = r.id;
-        if (r.id === selectedRobotId) tr.classList.add('selected');
+    // ── Таблица ───────────────────────────────────────────
+function getTargetOptions() {
+    if (!mapData || !mapData.nodes) return [];
+    const keys = Object.keys(mapData.nodes);
+    keys.sort();
+    return keys;
+}
 
+let lastRobotIds = '';
+function updateRobotTable(robotsList) {
+    const robotIds = (robotsList.map(r => r.id)).join(',');
+    if (robotIds !== lastRobotIds) {
+        const tbody = document.getElementById('robot-table-body');
+        tbody.innerHTML = '';
+        const targets = getTargetOptions();
+        robotsList.forEach(r => {
+            const tr = document.createElement('tr');
+            tr.dataset.robotId = r.id;
+            if (r.id === selectedRobotId) tr.classList.add('selected');
+
+            const isManual = r.id === manualRobotId;
+            const btnText = isManual ? '■ Выход' : '▶ Управлять';
+            const btnClass = isManual ? 'ctrl-btn active' : 'ctrl-btn';
+
+            tr.innerHTML = `
+          <td class="col-id">${r.id}</td>
+          <td class="col-x">${r.x.toFixed(2)}</td>
+          <td class="col-y">${r.y.toFixed(2)}</td>
+          <td class="col-status status-${r.status}">${r.status}</td>
+          <td class="col-mission">—</td>
+          <td class="col-error">—</td>
+          <td><input type="text" class="target-input" name="target_${r.id}" placeholder="узел/парковка" style="width:70px;"></td>
+          <td><button type="button" class="order-send-btn ctrl-btn">Send</button></td>
+          <td><button type="button" class="${btnClass}">${btnText}</button></td>
+        `;
+            tbody.appendChild(tr);
+        });
+        lastRobotIds = robotIds;
+    }
+    // Update values
+    const tbody = document.getElementById('robot-table-body');
+    robotsList.forEach(r => {
+        const tr = tbody.querySelector(`tr[data-robot-id="${r.id}"]`);
+        if (!tr) return;
+        if (r.id === selectedRobotId) tr.classList.add('selected'); else tr.classList.remove('selected');
+        tr.querySelector('.col-x').textContent = r.x.toFixed(2);
+        tr.querySelector('.col-y').textContent = r.y.toFixed(2);
+        const st = tr.querySelector('.col-status');
+        st.textContent = r.status;
+        st.className = `col-status status-${r.status}`;
         let missionHtml = '—';
         if (r.mission && r.mission.length > 0) {
             const idx = r.mission_idx || 0;
@@ -217,22 +258,15 @@ function updateRobotTable(robotsList) {
                 return node;
             }).join(' → ');
         }
-
-        const isManual = r.id === manualRobotId;
-        const btnText = isManual ? '■ Выход' : '▶ Управлять';
-        const btnClass = isManual ? 'ctrl-btn active' : 'ctrl-btn';
+        tr.querySelector('.col-mission').innerHTML = missionHtml;
         const errText = r.error ? r.error : (r.status === 'disconnected' ? 'connection_lost' : '—');
-
-        tr.innerHTML = `
-      <td>${r.id}</td>
-      <td>${r.x.toFixed(2)}</td>
-      <td>${r.y.toFixed(2)}</td>
-      <td class="status-${r.status}">${r.status}</td>
-      <td class="mission">${missionHtml}</td>
-      <td class="error">${errText}</td>
-      <td><button class="${btnClass}" data-robot-id="${r.id}">${btnText}</button></td>
-    `;
-        tbody.appendChild(tr);
+        tr.querySelector('.col-error').textContent = errText;
+        const manBtn = Array.from(tr.querySelectorAll('button.ctrl-btn')).find(b => !b.classList.contains('order-send-btn'));
+        if (manBtn) {
+            const isManual = r.id === manualRobotId;
+            manBtn.textContent = isManual ? '■ Выход' : '▶ Управлять';
+            manBtn.className = isManual ? 'ctrl-btn active' : 'ctrl-btn';
+        }
     });
 }
 
@@ -369,17 +403,41 @@ function toggleManual(robotId) {
 }
 
 // Клик по строке таблицы
+document.getElementById('robot-table-body').addEventListener('mousedown', (e) => {
+    if (e.target.classList.contains('target-input')) {
+        e.stopPropagation();
+    }
+}, true);
+
 document.getElementById('robot-table-body').addEventListener('click', (e) => {
+    if (e.target.classList.contains('target-input')) {
+        return;
+    }
     const tr = e.target.closest('tr');
     if (!tr) return;
     const rid = tr.dataset.robotId;
     if (!rid) return;
 
+    if (e.target.classList.contains('order-send-btn')) {
+        const inp = tr.querySelector('.target-input');
+        const target = inp ? inp.value.trim() : null;
+        if (target) {
+            fetch(`http://${window.location.hostname}:8191/order`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({robot_id: rid, target: target})
+            }).then(r => r.json()).then(data => {
+                console.log('order result', data);
+            }).catch(err => console.error(err));
+        }
+        return;
+    }
+
     if (e.target.classList.contains('ctrl-btn')) {
         toggleManual(rid);
-    } else {
-        selectedRobotId = rid;
+        return;
     }
+    selectedRobotId = rid;
     updateCoords();
 });
 

@@ -99,7 +99,7 @@ class RobotDriver(Node):
                 if node not in self.node_coords:
                     self.error = "node_not_found"
                     self.status = 'error'
-                    self.get_logger().error(f"Unknown node {node}")
+                    self.get_logger().error(f"Unknown node {node} not in {list(self.node_coords.keys())}")
                     return
             self.mission = path
             self.mission_idx = 0
@@ -176,7 +176,7 @@ class RobotDriver(Node):
         # Целевой узел
         target_id = self.mission[self.mission_idx]
         if target_id not in self.node_coords:
-            self.get_logger().warn(f"Unknown node {target_id}")
+            self.get_logger().warn(f"Unknown node {target_id} in coords {list(self.node_coords.keys())}")
             self.error = "node_not_found"
             self.status = 'error'
             self.pub_left.publish(Float64(data=0.0))
