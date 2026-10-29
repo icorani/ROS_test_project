@@ -57,43 +57,16 @@
           <material><ambient>0.6 0.6 0.6 1</ambient></material></visual>
       </link>
     </model>
-    <model name="inner_h_A2_B2">
+    <model name="inner_h_L5_T1">
       <static>true</static>
-      <pose>2 7.0 0.5 0 0 0</pose>
+      <pose>8 7.0 0.5 0 0 0</pose>
       <link name="link">
         <collision name="collision"><geometry><box><size>2.0 0.3 1.0</size></box></geometry></collision>
         <visual name="visual"><geometry><box><size>2.0 0.3 1.0</size></box></geometry>
-          <material><ambient>0.6 0.6 0.6 1</ambient></material></visual>
-      </link>
-    </model>
-    <model name="inner_h_A4_B4">
-      <static>true</static>
-      <pose>6 7.0 0.5 0 0 0</pose>
-      <link name="link">
-        <collision name="collision"><geometry><box><size>2.0 0.3 1.0</size></box></geometry></collision>
-        <visual name="visual"><geometry><box><size>2.0 0.3 1.0</size></box></geometry>
-          <material><ambient>0.6 0.6 0.6 1</ambient></material></visual>
-      </link>
-    </model>
-    <model name="inner_v_A5_R2">
-      <static>true</static>
-      <pose>9.0 8 0.5 0 0 0</pose>
-      <link name="link">
-        <collision name="collision"><geometry><box><size>0.3 2.0 1.0</size></box></geometry></collision>
-        <visual name="visual"><geometry><box><size>0.3 2.0 1.0</size></box></geometry>
           <material><ambient>0.6 0.6 0.6 1</ambient></material></visual>
       </link>
     </model>
     <model name="inner_h_P1_P2">
-      <static>true</static>
-      <pose>12 9.0 0.5 0 0 0</pose>
-      <link name="link">
-        <collision name="collision"><geometry><box><size>2.0 0.3 1.0</size></box></geometry></collision>
-        <visual name="visual"><geometry><box><size>2.0 0.3 1.0</size></box></geometry>
-          <material><ambient>0.6 0.6 0.6 1</ambient></material></visual>
-      </link>
-    </model>
-    <model name="inner_h_P2_P3">
       <static>true</static>
       <pose>12 7.0 0.5 0 0 0</pose>
       <link name="link">
@@ -102,7 +75,7 @@
           <material><ambient>0.6 0.6 0.6 1</ambient></material></visual>
       </link>
     </model>
-    <model name="inner_h_P3_P4">
+    <model name="inner_h_P2_P3">
       <static>true</static>
       <pose>12 5.0 0.5 0 0 0</pose>
       <link name="link">
@@ -111,7 +84,7 @@
           <material><ambient>0.6 0.6 0.6 1</ambient></material></visual>
       </link>
     </model>
-    <model name="inner_h_P4_P5">
+    <model name="inner_h_P3_P4">
       <static>true</static>
       <pose>12 3.0 0.5 0 0 0</pose>
       <link name="link">
@@ -120,9 +93,18 @@
           <material><ambient>0.6 0.6 0.6 1</ambient></material></visual>
       </link>
     </model>
+    <model name="inner_h_P4_P5">
+      <static>true</static>
+      <pose>12 1.0 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>2.0 0.3 1.0</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>2.0 0.3 1.0</size></box></geometry>
+          <material><ambient>0.6 0.6 0.6 1</ambient></material></visual>
+      </link>
+    </model>
     
     <model name="turtle_robot_1">
-      <pose>0 4 0.1 0 0 0</pose>
+      <pose>12 8 0.1 0 0 0</pose>
       <link name="chassis">
         <inertial><mass>15.0</mass><inertia><ixx>0.1</ixx><iyy>0.15</iyy><izz>0.2</izz></inertia></inertial>
         <collision name="collision"><geometry><box><size>0.3 0.2 0.1</size></box></geometry></collision>
@@ -190,7 +172,7 @@
       </plugin>
     </model>
     <model name="turtle_robot_2">
-      <pose>8 4 0.1 0 0 0</pose>
+      <pose>12 0 0.1 0 0 3.14159</pose>
       <link name="chassis">
         <inertial><mass>15.0</mass><inertia><ixx>0.1</ixx><iyy>0.15</iyy><izz>0.2</izz></inertia></inertial>
         <collision name="collision"><geometry><box><size>0.3 0.2 0.1</size></box></geometry></collision>
