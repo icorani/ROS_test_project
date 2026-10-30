@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import uvicorn
 
-from app import app  # noqa: F401  (при импорте запускаются startup-события и rclpy.init)
-
+from app import app 
 if __name__ == "__main__":
     import os
 

@@ -28,7 +28,7 @@ app.add_middleware(
 
 # ── Константы ────────────────────────────────────────────────────────
 CONNECTION_TIMEOUT = 2.5  # сек без обновления -> disconnected
-WAIT_TIMEOUT = 30.0  # сек ожидания освобождения ресурса
+WAIT_TIMEOUT = 5.0  # сек ожидания освобождения ресурса перед перестроением
 NODE_ARRIVAL_THRESHOLD = 0.3  # м, считаем роботом у узла
 DARK_SHOP_INTERVAL = 3.0  # сек
 
@@ -120,6 +120,33 @@ def node_dist(x: float, y: float, node: str) -> float:
     return math.hypot(x - p["x"], y - p["y"])
 
 
+def find_nearest_edge(x: float, y: float):
+    """Ближайшее ребро к точке (x, y) и расстояние до него."""
+    best = None
+    best_dist = float("inf")
+    for a, b in GRAPH.edges:
+        pa = POS[a]
+        pb = POS[b]
+        # projektion точки на отрезок a-b
+        ax, ay = pa["x"], pa["y"]
+        bx, by = pb["x"], pb["y"]
+        dx = bx - ax
+        dy = by - ay
+        if dx == 0 and dy == 0:
+            d = math.hypot(x - ax, y - ay)
+            t = 0.0
+        else:
+            t = ((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy)
+            t = max(0.0, min(1.0, t))
+            px = ax + t * dx
+            py = ay + t * dy
+            d = math.hypot(x - px, y - py)
+        if d < best_dist:
+            best_dist = d
+            best = (a, b)
+    return best, best_dist
+
+
 def release_all_for_robot(rid: str) -> None:
     LOCKS.release_all_for_robot(rid)
     MOVEMENT_CTX.pop(rid, None)
@@ -174,7 +201,8 @@ def on_state(rid: str, state: dict) -> None:
     # Застрявший робот (самоошибка) — блокируем узел где стоит (постоянно)
     if r.status == "error":
         cur = nearest_node(r.x, r.y)
-        LOCKS.lock_node(cur, rid, reason="stuck")
+        if node_dist(r.x, r.y, cur) < NODE_ARRIVAL_THRESHOLD:
+            LOCKS.lock_node(cur, rid, reason="stuck")
         MOVEMENT_CTX[rid] = {
             "seg_cur": cur,
             "seg_nxt": None,
@@ -184,10 +212,25 @@ def on_state(rid: str, state: dict) -> None:
         }
         return
 
+    # Ручное управление — блокируем узел/ребро где находится робот
+    if r.status == "manual":
+        cur = nearest_node(r.x, r.y)
+        if node_dist(r.x, r.y, cur) < NODE_ARRIVAL_THRESHOLD:
+            LOCKS.lock_node(cur, rid, reason="manual")
+        else:
+            edge, dist = find_nearest_edge(r.x, r.y)
+            if edge and dist < 1.0:
+                LOCKS.lock_edge(edge[0], edge[1], rid, reason="manual")
+        return
+
     # Восстановление после ошибки/ручного управления -> сброс блокировок
     if r.status in ("idle", "done") and not r.mission:
         release_all_for_robot(rid)
         r.error = None
+        # Робот стоит на узле — блокируем его (occupied), чтобы другие не приехали
+        cur = nearest_node(r.x, r.y)
+        if node_dist(r.x, r.y, cur) < NODE_ARRIVAL_THRESHOLD:
+            LOCKS.lock_node(cur, rid, reason="occupied")
         return
 
     # Движение: reconciliate блокировки
@@ -249,15 +292,15 @@ def _reconcile_movement(rid: str, r: RobotState, now: float) -> None:
             ctx["waiting"] = False
             ctx["wait_since"] = None
         else:
-            if now - (ctx.get("wait_since") or now) > WAIT_TIMEOUT:
-                new_path = PATHFINDER.find_path(seg_cur, r.target or seg_nxt, LOCKS, rid)
-                if new_path:
-                    _adopt_path(rid, r, new_path)
-                    ctx = MOVEMENT_CTX.get(rid, ctx)
-                else:
-                    ctx["wait_since"] = ctx.get("wait_since") or now
-            MOVEMENT_CTX[rid] = ctx
-            return
+            # Сразу пробуем перестроить маршрут (не ждём WAIT_TIMEOUT)
+            new_path = PATHFINDER.find_path(seg_cur, r.target or seg_nxt, LOCKS, rid)
+            if new_path:
+                _adopt_path(rid, r, new_path)
+                ctx = MOVEMENT_CTX.get(rid, ctx)
+            else:
+                ctx["wait_since"] = ctx.get("wait_since") or now
+        MOVEMENT_CTX[rid] = ctx
+        return
 
     # Освобождаем ресурсы предыдущего сегмента
     prev_cur = ctx.get("seg_cur")
@@ -297,7 +340,11 @@ def _reconcile_movement(rid: str, r: RobotState, now: float) -> None:
 
 
 def _acquire_segment_locks(rid: str, frm: str, to: str, lock_cur_node: bool = True) -> bool:
-    """Заблокировать [узел frm,] ребро frm-to, целевой узел to для rid."""
+    """Заблокировать [узел frm,] ребро frm-to, целевой узел to для rid.
+
+    Все узлы блокируются как resource_type='node', чтобы попадали в
+    blocked_nodes/blocked_edges и учитывались PathFinder.find_path.
+    """
     if lock_cur_node:
         if not LOCKS.lock_node(frm, rid, reason="node"):
             return False
@@ -305,7 +352,7 @@ def _acquire_segment_locks(rid: str, frm: str, to: str, lock_cur_node: bool = Tr
         if lock_cur_node:
             LOCKS.release_node(frm)
         return False
-    if not LOCKS.lock_target(to, rid, reason="target"):
+    if not LOCKS.lock_node(to, rid, reason="node"):
         if lock_cur_node:
             LOCKS.release_node(frm)
         LOCKS.release_edge(frm, to)
@@ -314,6 +361,15 @@ def _acquire_segment_locks(rid: str, frm: str, to: str, lock_cur_node: bool = Tr
 
 
 def _adopt_path(rid: str, r: RobotState, path: list[str]) -> None:
+    # Путь из одного узла — движения нет, считаем выполненным
+    if len(path) <= 1:
+        release_all_for_robot(rid)
+        r.status = "done"
+        r.mission = []
+        r.mission_idx = 0
+        r.target = None
+        MOVEMENT_CTX.pop(rid, None)
+        return
     # Не сбрасываем блокировки полностью: стартовый узел может быть уже
     # заблокирован роботом в order(); он перезапишется тем же владельцем
     # при первом _reconcile_movement. Сбрасываем только контекст движения.
@@ -389,6 +445,16 @@ async def order(payload: dict):
     if path is None:
         LOCKS.release_node(start)
         return {"ok": False, "error": "no_path"}
+
+    # Цель уже достигнута — робот стоит на целевом узле, движения не требуется
+    if len(path) <= 1 or start == target:
+        LOCKS.release_node(start)
+        r.status = "done"
+        r.mission = []
+        r.mission_idx = 0
+        r.target = None
+        MOVEMENT_CTX.pop(rid, None)
+        return {"ok": True, "path": path}
 
     _adopt_path(rid, r, path)
     return {"ok": True, "path": path}
