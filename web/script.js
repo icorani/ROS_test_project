@@ -210,6 +210,7 @@ function drawRobot(r) {
     else if (r.status === 'moving') fillColor = '#4f4';
     else if (r.status === 'manual') fillColor = '#f4a';
     else if (r.status === 'done') fillColor = '#0ff';
+    else if (r.status === 'inactive') fillColor = '#666';
     ctx.fillStyle = fillColor;
     ctx.fillRect(-0.15 * SCALE, -0.1 * SCALE, 0.3 * SCALE, 0.2 * SCALE);
     ctx.restore();
@@ -245,10 +246,24 @@ function updateRobotTable(robotsList) {
             const tr = document.createElement('tr');
             tr.dataset.robotId = r.id;
             if (r.id === selectedRobotId) tr.classList.add('selected');
+            if (!r.is_active) tr.classList.add('inactive');
 
             const isManual = r.id === manualRobotId;
             const btnText = isManual ? '■ Выход' : '▶ Управлять';
             const btnClass = isManual ? 'ctrl-btn active' : 'ctrl-btn';
+
+            let orderHtml = '';
+            let actionHtml = '';
+            if (r.is_active) {
+                orderHtml = `
+          <td><input type="text" class="target-input" name="target_${r.id}" placeholder="узел/парковка" style="width:70px;"></td>
+          <td><button type="button" class="order-send-btn ctrl-btn">Send</button></td>
+          <td><button type="button" class="go-home-btn ctrl-btn">Домой</button></td>
+          <td><button type="button" class="${btnClass}">${btnText}</button></td>
+        `;
+            } else {
+                orderHtml = `<td colspan="4">— (неактивен)</td>`;
+            }
 
             tr.innerHTML = `
           <td class="col-id">${r.id}</td>
@@ -257,9 +272,7 @@ function updateRobotTable(robotsList) {
           <td class="col-status status-${r.status}">${r.status}</td>
           <td class="col-mission">—</td>
           <td class="col-error">—</td>
-          <td><input type="text" class="target-input" name="target_${r.id}" placeholder="узел/парковка" style="width:70px;"></td>
-          <td><button type="button" class="order-send-btn ctrl-btn">Send</button></td>
-          <td><button type="button" class="${btnClass}">${btnText}</button></td>
+          ${orderHtml}
         `;
             tbody.appendChild(tr);
         });
@@ -271,6 +284,7 @@ function updateRobotTable(robotsList) {
         const tr = tbody.querySelector(`tr[data-robot-id="${r.id}"]`);
         if (!tr) return;
         if (r.id === selectedRobotId) tr.classList.add('selected'); else tr.classList.remove('selected');
+        if (!r.is_active) tr.classList.add('inactive'); else tr.classList.remove('inactive');
         tr.querySelector('.col-x').textContent = r.x.toFixed(2);
         tr.querySelector('.col-y').textContent = r.y.toFixed(2);
         const st = tr.querySelector('.col-status');
@@ -288,11 +302,13 @@ function updateRobotTable(robotsList) {
         tr.querySelector('.col-mission').innerHTML = missionHtml;
         const errText = r.error ? r.error : (r.status === 'disconnected' ? 'connection_lost' : '—');
         tr.querySelector('.col-error').textContent = errText;
-        const manBtn = Array.from(tr.querySelectorAll('button.ctrl-btn')).find(b => !b.classList.contains('order-send-btn'));
-        if (manBtn) {
-            const isManual = r.id === manualRobotId;
-            manBtn.textContent = isManual ? '■ Выход' : '▶ Управлять';
-            manBtn.className = isManual ? 'ctrl-btn active' : 'ctrl-btn';
+        if (r.is_active) {
+            const manBtn = Array.from(tr.querySelectorAll('button.ctrl-btn')).find(b => !b.classList.contains('order-send-btn') && !b.classList.contains('go-home-btn'));
+            if (manBtn) {
+                const isManual = r.id === manualRobotId;
+                manBtn.textContent = isManual ? '■ Выход' : '▶ Управлять';
+                manBtn.className = isManual ? 'ctrl-btn active' : 'ctrl-btn';
+            }
         }
     });
 }
@@ -466,6 +482,17 @@ document.getElementById('robot-table-body').addEventListener('click', (e) => {
                 }
             }).catch(err => console.error(err));
         }
+        return;
+    }
+
+    if (e.target.classList.contains('go-home-btn')) {
+        fetch(`http://${window.location.hostname}:8191/go_home`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({robot_id: rid})
+        }).then(r => r.json()).then(data => {
+            console.log('go_home result', data);
+        }).catch(err => console.error(err));
         return;
     }
 

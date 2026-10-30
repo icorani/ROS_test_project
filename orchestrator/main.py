@@ -18,6 +18,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 
 # ── Загрузка конфига ──────────────────────────────────
 MAP_NAME = os.getenv("MAP", "simple")
+NUM_ROBOTS_ENV = os.getenv("NUM_ROBOTS", "")
 MAP_PATH = f"/configs/{MAP_NAME}.yaml"
 with open(MAP_PATH) as f:
     CFG = yaml.safe_load(f)
@@ -27,6 +28,29 @@ PARKING = CFG.get("parking", {})
 EDGES = CFG["edges"]
 BOUNDS = CFG["bounds"]
 ROBOTS_CFG = CFG.get("robots", {})
+
+# Если секции robots нет или она пуста — генерируем роботов из parking (отсортировано по имени)
+if not ROBOTS_CFG:
+    sorted_parking = sorted(PARKING.items(), key=lambda item: item[0])
+    for i, (pid, pos) in enumerate(sorted_parking):
+        ROBOTS_CFG[f"robot_{i+1}"] = {
+            "start_node": pid,
+            "start_x": pos["x"],
+            "start_y": pos["y"],
+            "start_yaw": 0,
+            "color": "#4af",
+            "home_parking": pid,
+        }
+
+# Определяем количество активных роботов через NUM_ROBOTS env
+if NUM_ROBOTS_ENV:
+    try:
+        NUM_ROBOTS_LIMIT = int(NUM_ROBOTS_ENV)
+    except ValueError:
+        NUM_ROBOTS_LIMIT = len(ROBOTS_CFG)
+else:
+    NUM_ROBOTS_LIMIT = len(ROBOTS_CFG)
+NUM_ROBOTS_LIMIT = min(max(NUM_ROBOTS_LIMIT, 0), len(ROBOTS_CFG))
 
 ALL_NODES = {**NODES, **PARKING}
 POS = {**NODES, **PARKING}
@@ -161,13 +185,14 @@ def is_node_occupied(node: str, robot_id: str = None) -> bool:
 
 # ── Состояния роботов ─────────────────────────────────
 robots = {}
-for rid, rcfg in ROBOTS_CFG.items():
+for i, (rid, rcfg) in enumerate(ROBOTS_CFG.items()):
+    is_active = i < NUM_ROBOTS_LIMIT
     robots[rid] = {
         "id": rid,
         "x": rcfg.get("start_x", 0),
         "y": rcfg.get("start_y", 0),
         "yaw": 0.0,
-        "status": "idle",
+        "status": "idle" if is_active else "inactive",
         "mission": [],
         "mission_idx": 0,
         "target": None,
@@ -179,6 +204,8 @@ for rid, rcfg in ROBOTS_CFG.items():
         "last_x": rcfg.get("start_x", 0),
         "last_y": rcfg.get("start_y", 0),
         "stuck_since": None,
+        "home_parking": rcfg.get("home_parking"),
+        "is_active": is_active,
     }
 
 # ── Блокировки ────────────────────────────────────────
@@ -209,6 +236,8 @@ class OrchestratorNode(Node):
         self.publishers_order = {}
         self.publishers_cmd = {}
         for rid in robots:
+            if not robots[rid].get("is_active", True):
+                continue
             self.publishers_order[rid] = self.create_publisher(String, f"/{rid}/order", 10)
             self.publishers_cmd[rid] = self.create_publisher(Twist, f"/{rid}/cmd_vel", 10)
             self.create_subscription(String, f"/{rid}/state", self.make_state_cb(rid), 10)
@@ -316,6 +345,8 @@ class OrchestratorNode(Node):
 
     def send_order(self, rid, path):
         r = robots.get(rid, {})
+        if not r.get("is_active", True):
+            return
         if r.get("status") in ["idle", "done"] and rid in stuck_robots:
             stuck_robots.discard(rid)
             robots[rid]["stuck_count"] = 0
@@ -332,6 +363,9 @@ class OrchestratorNode(Node):
 
     def send_cmd(self, rid, linear, angular):
         self.get_logger().info(f"send_cmd: rid={rid}, linear={linear}, angular={angular}")
+        r = robots.get(rid, {})
+        if not r.get("is_active", True):
+            return
         if rid in stuck_robots:
             self.get_logger().warn(f"Cannot send cmd to stuck robot {rid}")
             return
@@ -386,6 +420,8 @@ async def do_dark_shop():
     # Give random long-distance orders to idle robots
     parking_nodes = list(PARKING.keys()) if PARKING else list(ALL_NODES.keys())
     for rid, r in robots.items():
+        if not r.get("is_active", True):
+            continue
         if rid in stuck_robots:
             continue
         if r.get("status") in ["idle", "done"] and (time.time() - r.get("last_update", 0) < CONNECTION_TIMEOUT):
@@ -452,6 +488,23 @@ async def ws_endpoint(ws: WebSocket):
                     if rid in stuck_robots:
                         stuck_robots.discard(rid)
                     # Don't auto-clear blocked nodes/edges as per requirement
+                elif msg.get("type") == "go_home":
+                    rid = msg.get("robot_id")
+                    r = robots.get(rid, {})
+                    if not r or not r.get("is_active", True):
+                        continue
+                    home = r.get("home_parking")
+                    if not home:
+                        continue
+                    cur = nearest_node(r.get("x", 0), r.get("y", 0))
+                    path = find_path(cur, home, blocked_nodes=blocked_nodes, blocked_edges=blocked_edges, robot_id=rid)
+                    if path:
+                        r["mission"] = path
+                        r["status"] = "moving"
+                        r["target"] = home
+                        release_reservations(rid)
+                        reserve_path(rid, path)
+                        node.send_order(rid, path)
             except asyncio.TimeoutError:
                 pass
             await ws.send_text(json.dumps({
@@ -476,6 +529,9 @@ async def order(payload: dict):
     rid = payload.get("robot_id", "robot_1")
     target = payload.get("target")
     start = payload.get("start")
+    r = robots.get(rid, {})
+    if not r or not r.get("is_active", True):
+        return {"ok": False, "error": "robot_inactive"}
     # Release stuck robot's blocked resources before pathfinding so it can recover
     if rid in stuck_robots:
         stuck_robots.discard(rid)
@@ -504,6 +560,38 @@ async def order(payload: dict):
     reserve_path(rid, path)
     node.send_order(rid, path)
     return {"ok": True, "path": path}
+
+@app.post("/go_home")
+async def go_home(payload: dict):
+    rid = payload.get("robot_id", "robot_1")
+    r = robots.get(rid, {})
+    if not r or not r.get("is_active", True):
+        return {"ok": False, "error": "robot_inactive"}
+    home = r.get("home_parking")
+    if not home:
+        return {"ok": False, "error": "no_home_parking"}
+    if rid in stuck_robots:
+        stuck_robots.discard(rid)
+        robots[rid]["stuck_count"] = 0
+        robots[rid]["stuck_since"] = None
+        robots[rid]["error"] = None
+        for n in robot_blocked_nodes.pop(rid, []):
+            blocked_nodes.discard(n)
+        for e in robot_blocked_edges.pop(rid, []):
+            blocked_edges.discard(e)
+    if time.time() - robots.get(rid, {}).get("last_update", 0) > CONNECTION_TIMEOUT:
+        return {"ok": False, "error": "connection_lost"}
+    cur = nearest_node(r.get("x", 0), r.get("y", 0))
+    path = find_path(cur, home, blocked_nodes=blocked_nodes, blocked_edges=blocked_edges, robot_id=rid)
+    if path is None:
+        return {"ok": False, "error": "no_path"}
+    robots[rid]["mission"] = path
+    robots[rid]["status"] = "moving"
+    robots[rid]["target"] = home
+    release_reservations(rid)
+    reserve_path(rid, path)
+    node.send_order(rid, path)
+    return {"ok": True, "path": path, "home": home}
 
 @app.get("/state")
 async def state(pretty: bool = False):

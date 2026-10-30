@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>warehouse_bringup</name>
+  <version>0.0.1</version>
+  <description>Warehouse bringup: auto-launch robot drivers and gazebo bridge based on map config</description>
+  <maintainer email="dev@example.com">dev</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_python</buildtool_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>robot_sim</exec_depend>
+</package>

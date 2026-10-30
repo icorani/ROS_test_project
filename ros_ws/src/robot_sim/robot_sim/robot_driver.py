@@ -23,10 +23,26 @@ class RobotDriver(Node):
         # Координаты узлов
         self.node_coords = {**cfg['nodes'], **cfg.get('parking', {})}
 
-        # Стартовые координаты (из конфига)
-        robot_cfg = cfg['robots'][self.robot_id]
-        self.start_x = robot_cfg['start_x']
-        self.start_y = robot_cfg['start_y']
+        # Стартовые координаты (из конфига секции robots, либо из parking по индексу)
+        robots_cfg = cfg.get('robots', {})
+        if self.robot_id in robots_cfg:
+            robot_cfg = robots_cfg[self.robot_id]
+            self.start_x = robot_cfg['start_x']
+            self.start_y = robot_cfg['start_y']
+            self.start_yaw = robot_cfg.get('start_yaw', 0)
+        else:
+            # Вывести из parking: robot_1 -> P1, robot_2 -> P2, ...
+            parking = sorted(cfg.get('parking', {}).items(), key=lambda item: item[0])
+            idx = int(self.robot_id.split('_')[-1]) - 1
+            if 0 <= idx < len(parking):
+                _, pos = parking[idx]
+                self.start_x = pos['x']
+                self.start_y = pos['y']
+                self.start_yaw = 0
+            else:
+                self.start_x = 0.0
+                self.start_y = 0.0
+                self.start_yaw = 0
 
         # Параметры робота
         self.L = 0.22

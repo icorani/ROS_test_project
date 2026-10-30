@@ -3,6 +3,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-jazzy-rosbridge-server \
     ros-jazzy-ros-gz \
     python3-pip \
+    && pip3 install --no-cache-dir --break-system-packages pyyaml \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /ros_ws
 COPY ros_ws /ros_ws
