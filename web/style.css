@@ -72,6 +72,14 @@
             color: #f4a;
         }
 
+        #robot-table td.status-inactive {
+            color: #666;
+        }
+
+        #robot-table tr.inactive {
+            opacity: 0.5;
+        }
+
         #robot-table tr.selected {
             background: rgba(255, 255, 255, 0.1);
         }

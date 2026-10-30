@@ -6,10 +6,17 @@ services:
     container_name: ros
     environment:
       - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
+      - MAP=${MAP:-simple}
+      - NUM_ROBOTS=${NUM_ROBOTS:-}
     volumes:
       - ./ros_ws:/ros_ws
       - ./config_nodes_edges:/configs
-    command: bash -c "source /opt/ros/jazzy/setup.bash && tail -f /dev/null"
+      - ./scripts:/scripts:ro
+    command: >
+      bash -c "
+      source /opt/ros/jazzy/setup.bash &&
+      /scripts/bringup.sh
+      "
     network_mode: host
     ipc: host
     logging:
@@ -25,22 +32,14 @@ services:
       - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
       - DISPLAY=${DISPLAY:-:0}
       - QT_QPA_PLATFORM=xcb
+      - MAP=${MAP:-simple}
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - ./gazebo:/gazebo
     command: >
       bash -c "
       source /opt/ros/jazzy/setup.bash &&
-      gz sim -s -r /gazebo/warehouse_${MAP}.sdf &
-      sleep 5 &&
-      ros2 run ros_gz_bridge parameter_bridge
-      /odom_robot_1@nav_msgs/msg/Odometry@gz.msgs.Odometry
-      /model/turtle_robot_1/joint/joint_left/cmd_vel@std_msgs/msg/Float64@gz.msgs.Double
-      /model/turtle_robot_1/joint/joint_right/cmd_vel@std_msgs/msg/Float64@gz.msgs.Double
-      /odom_robot_2@nav_msgs/msg/Odometry@gz.msgs.Odometry
-      /model/turtle_robot_2/joint/joint_left/cmd_vel@std_msgs/msg/Float64@gz.msgs.Double
-      /model/turtle_robot_2/joint/joint_right/cmd_vel@std_msgs/msg/Float64@gz.msgs.Double
-      && wait
+      gz sim -s -r /gazebo/warehouse_${MAP}.sdf
       "
     network_mode: host
     ipc: host
@@ -72,6 +71,7 @@ services:
       - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
       - ORCHESTRATOR_PORT=${ORCHESTRATOR_PORT:-8191}
       - MAP=${MAP:-simple}
+      - NUM_ROBOTS=${NUM_ROBOTS:-}
       - ROBOT_START_X=${ROBOT_START_X:-0}
       - ROBOT_START_Y=${ROBOT_START_Y:-0}
     volumes:

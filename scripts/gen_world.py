@@ -153,9 +153,24 @@ walls = [
 # Внутренние стены (там, где нет рёбер)
 walls += inner_walls(ALL_NODES, EDGES, t)
 
+# Роботы — берутся из секции robots, либо генерируются из parking (отсортировано по имени)
+robots_cfg = cfg.get("robots", {})
+if not robots_cfg:
+    parking = cfg.get("parking", {})
+    robots_cfg = {
+        f"robot_{i+1}": {
+            "start_node": pid,
+            "start_x": pos["x"],
+            "start_y": pos["y"],
+            "start_yaw": 0,
+            "color": "#4af",
+        }
+        for i, (pid, pos) in enumerate(sorted(parking.items(), key=lambda item: item[0]))
+    }
+
 # Роботы
 robots_sdf = ""
-for robot_id, r in cfg.get("robots", {}).items():
+for robot_id, r in robots_cfg.items():
     robots_sdf += robot_model(
         robot_id,
         r.get("start_x", 0),
@@ -196,7 +211,7 @@ with open(OUT_PATH, "w") as f:
     f.write(sdf)
 
 n_inner = len(inner_walls(ALL_NODES, EDGES, t))
-print(f"Generated {OUT_PATH} with {len(cfg.get('robots', {}))} robots and {n_inner} inner walls")
+print(f"Generated {OUT_PATH} with {len(robots_cfg)} robots and {n_inner} inner walls")
 
 import json
 
