@@ -24,6 +24,7 @@ let blockedNodes = new Set();
 let blockedEdges = new Set();
 let reservedNodes = new Set();
 let reservedEdges = new Set();
+let occupiedNodes = new Set();
 let darkShopEnabled = false;
 let stuckRobots = new Set();
 
@@ -147,8 +148,11 @@ function drawGraph() {
         const isParking = id.startsWith('P');
         const isBlocked = blockedNodes.has(id);
         const isReserved = reservedNodes.has(id);
+        const isOccupied = occupiedNodes.has(id);
         if (isBlocked) {
             ctx.fillStyle = '#f44';
+        } else if (isOccupied) {
+            ctx.fillStyle = '#ffd700';
         } else if (isReserved) {
             ctx.fillStyle = '#ffa500';
         } else if (isParking) {
@@ -160,6 +164,10 @@ function drawGraph() {
         ctx.arc(px, py, isParking ? 6 : 5, 0, 2 * Math.PI);
         ctx.fill();
         if (isBlocked) {
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        } else if (isOccupied) {
             ctx.strokeStyle = '#fff';
             ctx.lineWidth = 2;
             ctx.stroke();
@@ -327,6 +335,7 @@ function connect() {
                 blockedEdges = new Set((msg.data.blocked_edges || []).map(e => e.sort().join(',')));
                 reservedNodes = new Set(Object.keys(msg.data.reserved_nodes || {}));
                 reservedEdges = new Set(Object.keys(msg.data.reserved_edges || {}));
+                occupiedNodes = new Set(Object.keys(msg.data.occupied_nodes || {}));
                 darkShopEnabled = msg.data.dark_shop || false;
                 stuckRobots = new Set(msg.data.stuck_robots || []);
                 updateDarkShopBtn();
@@ -339,6 +348,7 @@ function connect() {
                 blockedEdges = new Set((msg.blocked_edges || []).map(e => e.sort().join(',')));
                 reservedNodes = new Set(Object.keys(msg.reserved_nodes || {}));
                 reservedEdges = new Set(Object.keys(msg.reserved_edges || {}));
+                occupiedNodes = new Set(Object.keys(msg.occupied_nodes || {}));
                 darkShopEnabled = msg.dark_shop || false;
                 stuckRobots = new Set(msg.stuck_robots || []);
                 updateDarkShopBtn();

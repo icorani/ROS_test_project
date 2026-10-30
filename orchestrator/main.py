@@ -55,15 +55,18 @@ def find_path(start: str, goal: str, blocked_nodes=None, blocked_edges=None, rob
         blocked_edges = set()
     now = time.time()
     # Clean expired reservations
-    expired = [k for k, v in path_reservations.items() if v["expires"] < now]
-    for k in expired:
+    expired_keys = [k for k, v in path_reservations.items() if v["expires"] < now]
+    for k in expired_keys:
         del path_reservations[k]
-    # Goal cannot be blocked (except by the requesting robot itself)
+    # Goal cannot be blocked by stuck robot (except by the requesting robot itself)
     if goal in blocked_nodes and blocked_nodes_owner.get(goal) != robot_id:
         return None
     # Goal cannot be reserved by another robot
     goal_res_key = f"node:{goal}"
     if goal_res_key in path_reservations and path_reservations[goal_res_key]["robot_id"] != robot_id:
+        return None
+    # Goal cannot be occupied by another robot
+    if is_node_occupied(goal, robot_id):
         return None
     dist = {start: 0.0}
     prev = {}
@@ -80,11 +83,17 @@ def find_path(start: str, goal: str, blocked_nodes=None, blocked_edges=None, rob
         u_res_key = f"node:{u}"
         if u != start and u_res_key in path_reservations and path_reservations[u_res_key]["robot_id"] != robot_id:
             continue
+        # Intermediate node occupied by another robot -> skip
+        if u != start and is_node_occupied(u, robot_id):
+            continue
         for v in ADJ.get(u, []):
             if v in blocked_nodes and blocked_nodes_owner.get(v) != robot_id:
                 continue
             v_res_key = f"node:{v}"
             if v_res_key in path_reservations and path_reservations[v_res_key]["robot_id"] != robot_id:
+                continue
+            # Target node occupied by another robot -> skip
+            if is_node_occupied(v, robot_id):
                 continue
             edge_key = tuple(sorted((u, v)))
             if edge_key in blocked_edges and blocked_edges_owner.get(edge_key) != robot_id:
@@ -135,6 +144,21 @@ def release_reservations(robot_id: str):
 def nearest_node(x, y):
     return min(POS.keys(), key=lambda n: math.dist((POS[n]["x"], POS[n]["y"]), (x, y)))
 
+
+def is_node_occupied(node: str, robot_id: str = None) -> bool:
+    """Проверяет, находится ли другой робот близко к узлу."""
+    if node not in POS:
+        return False
+    nx, ny = POS[node]["x"], POS[node]["y"]
+    for rid, r in robots.items():
+        if rid == robot_id:
+            continue
+        # Робот считается занимающим узел, если близко к нему (< 0.6 м)
+        dist = math.hypot(r.get("x", 0) - nx, r.get("y", 0) - ny)
+        if dist < 0.6:
+            return True
+    return False
+
 # ── Состояния роботов ─────────────────────────────────
 robots = {}
 for rid, rcfg in ROBOTS_CFG.items():
@@ -167,6 +191,7 @@ blocked_nodes_owner = {}  # node -> robot_id that blocked it
 blocked_edges_owner = {}  # edge -> robot_id that blocked it
 path_reservations = {}  # key ("node:C1" or "edge:C1,B2") -> {robot_id, expires}
 RESERVATION_TTL = 15.0  # seconds
+occupied_nodes = {}  # node -> robot_id currently at that node
 
 # ── Dark shop (Тёмный цех) ────────────────────────────
 dark_shop_enabled = False
@@ -206,6 +231,17 @@ class OrchestratorNode(Node):
                     "error": data.get("error"),
                     "last_update": now,
                 })
+                # Track which node this robot occupies (for UI and pathfinding)
+                rx, ry = robots[rid]["x"], robots[rid]["y"]
+                nearest = nearest_node(rx, ry)
+                if nearest in POS:
+                    ndist = math.hypot(rx - POS[nearest]["x"], ry - POS[nearest]["y"])
+                    if ndist < 0.3:
+                        # Remove old occupancy for this robot
+                        for n, r in list(occupied_nodes.items()):
+                            if r == rid:
+                                del occupied_nodes[n]
+                        occupied_nodes[nearest] = rid
                 # Check for stuck
                 if robots[rid]["status"] == "moving" and robots[rid].get("mission"):
                     last_x = prev.get("x", robots[rid]["x"])
@@ -385,6 +421,7 @@ async def ws_endpoint(ws: WebSocket):
                     "stuck_robots": list(stuck_robots),
                     "reserved_nodes": {k[5:]: v["robot_id"] for k, v in path_reservations.items() if k.startswith("node:")},
                     "reserved_edges": {k[5:]: v["robot_id"] for k, v in path_reservations.items() if k.startswith("edge:")},
+                    "occupied_nodes": {n: rid for n, rid in occupied_nodes.items()},
                 }}))
     try:
         while True:
@@ -426,6 +463,7 @@ async def ws_endpoint(ws: WebSocket):
                 "stuck_robots": list(stuck_robots),
                 "reserved_nodes": {k[5:]: v["robot_id"] for k, v in path_reservations.items() if k.startswith("node:")},
                 "reserved_edges": {k[5:]: v["robot_id"] for k, v in path_reservations.items() if k.startswith("edge:")},
+                "occupied_nodes": {n: rid for n, rid in occupied_nodes.items()},
             }))
             await asyncio.sleep(0.05)
     except WebSocketDisconnect:
@@ -469,7 +507,16 @@ async def order(payload: dict):
 
 @app.get("/state")
 async def state(pretty: bool = False):
-    data = {"robots": list(robots.values()), "blocked_nodes": list(blocked_nodes), "dark_shop": dark_shop_enabled}
+    data = {
+        "robots": list(robots.values()),
+        "blocked_nodes": list(blocked_nodes),
+        "blocked_edges": [list(e) for e in blocked_edges],
+        "dark_shop": dark_shop_enabled,
+        "stuck_robots": list(stuck_robots),
+        "reserved_nodes": {k[5:]: v["robot_id"] for k, v in path_reservations.items() if k.startswith("node:")},
+        "reserved_edges": {k[5:]: v["robot_id"] for k, v in path_reservations.items() if k.startswith("edge:")},
+        "occupied_nodes": {n: rid for n, rid in occupied_nodes.items()},
+    }
     if pretty:
         return Response(
             content=json.dumps(data, indent=2, ensure_ascii=False),
