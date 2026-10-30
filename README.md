@@ -22,24 +22,16 @@ git clone <repo-url>
 cd ROS_test_project
 ```
 
-### 2. Запустить контейнеры и ноды
+### 2. Запустить контейнеры
 
 ```bash
-# Поднять все контейнеры
+# Поднять все контейнеры (роботы запускаются автоматически)
 docker compose up --build
 ```
 
 > **Примечание:** Первый запуск займёт 5–10 минут (скачивание образов `ros:jazzy`, `osrf/ros:jazzy-desktop-full`, `nginx:alpine`).
-
-В отдельных терминалах запустите ноды роботов (по одной на робота):
-
-```bash
-# Робот 1
-docker compose exec ros bash -c "source /opt/ros/jazzy/setup.bash && ROBOT_ID=robot_1 MAP=simple python3 /ros_ws/src/robot_sim/robot_sim/robot_driver.py"
-
-# Робот 2
-docker compose exec ros bash -c "source /opt/ros/jazzy/setup.bash && ROBOT_ID=robot_2 MAP=simple python3 /ros_ws/src/robot_sim/robot_sim/robot_driver.py"
-```
+>
+> Роботы стартуют автоматически из `scripts/bringup.sh` — по одному экземпляру `robot_driver` на каждую активную парковку. Количество активных роботов регулируется переменной `NUM_ROBOTS` в `.env` (пусто = все парковки). Не превышает количества парковочных точек.
 
 ### 3. Открыть Canvas и API
 
@@ -62,9 +54,12 @@ docker compose exec ros bash -c "source /opt/ros/jazzy/setup.bash && ROBOT_ID=ro
 | **Управлять вручную** | Кнопка **▶ Управлять** → `WASD` |
 | **Выйти из ручного режима** | Кнопка **■ Выход** или `Esc` |
 | **Дать приказ** | `curl -X POST http://localhost:8191/order ...` |
+| **Отправить домой (на парковку)** | `curl -X POST http://localhost:8191/go_home -d '{"robot_id":"robot_1"}'` |
+| **Количество активных роботов** | Переменная `NUM_ROBOTS` в `.env` (пусто = все парковки) |
 | **Переключить карту** | `MAP=stress docker compose up -d` |
 
 > `WASD` работает в любой раскладке клавиатуры (используется `e.code`, а не `e.key`).
+> Неактивные роботы (количество > `NUM_ROBOTS`) отображаются в таблице серым цветом без кнопок управления.
 
 ---
 
@@ -91,27 +86,18 @@ docker compose exec ros bash -c "source /opt/ros/jazzy/setup.bash && ROBOT_ID=ro
                │ ROS 2 (DDS)
                ▼
 ┌──────────────────────────────────────────────────────────┐
-│  robot_driver (N экземпляров, контейнер ros)             │
-│  ├─ SUB /robot_<id>/order (приказ)                       │
-│  ├─ SUB /robot_<id>/cmd_vel (ручное управление)          │
-│  ├─ SUB /odom_<id> (позиция из Gazebo)                   │
-│  ├─ PUB /robot_<id>/state (состояние)                    │
-│  └─ PUB /model/turtle_<id>/joint/.../cmd_vel (в Gazebo)  │
+│  robot_driver + ros_gz_bridge (контейнер ros)            │
+│  ├─ robot_driver: SUB /robot_<id>/order, /robot_<id>/cmd_vel│
+│  ├─ robot_driver: SUB /odom_<id>, PUB /robot_<id>/state   │
+│  ├─ ros_gz_bridge: /odom_<id> ROS↔Gazebo                 │
+│  └─ ros_gz_bridge: /model/turtle_<id>/joint/*/cmd_vel ROS↔Gazebo│
 └──────────────┬───────────────────────────────────────────┘
-               │ ROS 2 (DDS)
-               ▼
-┌──────────────────────────────────────────────────────────┐
-│  ros_gz_bridge (контейнер gazebo)                        │
-│  ├─ /odom_<id>: ROS 2 ↔ Gazebo                           │
-│  └─ /model/turtle_<id>/joint/.../cmd_vel: ROS 2 ↔ Gazebo │
-└──────────────┬───────────────────────────────────────────┘
-               │ Gazebo Transport
+               │ ROS 2 (DDS) / Gazebo Transport
                ▼
 ┌──────────────────────────────────────────────────────────┐
 │  Gazebo Harmonic (headless)                              │
 │  ├─ стены (внешние + внутренние, из YAML)                │
-│  ├─ turtle_robot_1 (JointController + OdometryPublisher) │
-│  └─ turtle_robot_2 (JointController + OdometryPublisher) │
+│  ├─ turtle_robot_N (JointController + OdometryPublisher) │
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -128,6 +114,9 @@ WEB_PORT=8190
 ORCHESTRATOR_PORT=8191
 ROSBRIDGE_PORT=8192
 MAP=simple
+
+# Количество активных роботов (пусто = все парковки, не более их числа)
+NUM_ROBOTS=
 ```
 
 ### `config_nodes_edges/simple.yaml` / `stress.yaml`
@@ -151,20 +140,9 @@ edges:
   - [A1, A2]
   - [A2, A3]
   ...
-robots:
-  robot_1:
-    start_node: C1
-    start_x: 0
-    start_y: 4
-    start_yaw: 0
-    color: "#4af"
-  robot_2:
-    start_node: C5
-    start_x: 8
-    start_y: 4
-    start_yaw: 0
-    color: "#f4a"
 ```
+
+Секция `robots` не требуется — роботы создаются автоматически из точек `parking` (сортировка по имени: `robot_1` на `P1`, `robot_2` на `P2` и т.д.). Активные роботы — первые `NUM_ROBOTS` парковок, остальные отображаются как `inactive`.
 
 > Внутренние стены генерируются автоматически: там, где между соседними узлами нет ребра, ставится стена. Это не даёт роботам срезать по диагонали.
 
@@ -192,7 +170,8 @@ python3 scripts/gen_world.py stress
 | :--- | :--- | :--- |
 | `GET` | `/health` | `{status, map, robots}` |
 | `GET` | `/state` | Состояния всех роботов (поддерживает `?pretty=true`) |
-| `POST` | `/order` | Приказ: `{robot_id, target, start}` $\rightarrow$ `{ok, path}` |
+| `POST` | `/order` | Приказ: `{robot_id, target, start}` → `{ok, path}` |
+| `POST` | `/go_home` | Вернуть робота на свою парковку: `{robot_id}` → `{ok, path, home}` |
 | `WS` | `/ws` | Canvas: карта + состояния + `cmd_vel` / `resume` |
 
 ### Пример: дать приказ
@@ -209,6 +188,24 @@ curl -X POST http://localhost:8191/order \
 {
   "ok": true,
   "path": ["C1", "C2", "C3", "C4", "C5"]
+}
+```
+
+### Пример: отправить робота домой (на свою парковку)
+
+```bash
+curl -X POST http://localhost:8191/go_home \
+  -H "Content-Type: application/json" \
+  -d '{"robot_id": "robot_1"}'
+```
+
+**Ответ:**
+
+```json
+{
+  "ok": true,
+  "path": ["C4", "C3", "C2", "C1", "P1"],
+  "home": "P1"
 }
 ```
 
@@ -266,6 +263,7 @@ curl "http://localhost:8191/state?pretty=true"
 | `done` | Доехал до цели |
 | `manual` | Ручное управление (WASD) |
 | `error` | Ошибка (узел не найден, застрял) |
+| `inactive` | Неактивен (количество роботов > NUM_ROBOTS) |
 
 ---
 
@@ -274,8 +272,7 @@ curl "http://localhost:8191/state?pretty=true"
 * **Запуск только на localhost.** Canvas подключается к `ws://localhost:8191/ws`. Для доступа с другого хоста нужно заменить `localhost` на IP в `web/index.html` и открыть порт `8191` в файрволе.
 * **Headless Gazebo.** GUI не используется (нет GPU/дисплея в контейнере). Визуализация — через Canvas.
 * **Один робот в ручном режиме.** При выборе «Управлять» у другого робота предыдущий автоматически выходит из ручного режима.
-* **Блокировки узлов/рёбер не реализованы.** Роботы могут ехать по одному маршруту и сталкиваться. В планах — добавление блокировок в оркестратор.
-* **«Тёмный цех» не реализован.** В планах — фоновый таск со случайными приказами.
+* **Количество активных роботов** ограничено переменной `NUM_ROBOTS` и числом парковочных точек (`parking` в YAML карты).
 
 ---
 
@@ -299,11 +296,18 @@ ROS_test_project/
 │   ├── main.py
 │   └── requirements.txt
 ├── ros_ws/                      # ROS 2 workspace
-│   └── src/robot_sim/
-│       └── robot_sim/
-│           └── robot_driver.py
+│   └── src/
+│       ├── robot_sim/
+│       │   └── robot_sim/
+│       │       └── robot_driver.py
+│       └── warehouse_bringup/
+│           ├── package.xml
+│           ├── setup.py
+│           └── launch/
+│               └── warehouse_bringup.launch.py
 ├── scripts/
-│   └── gen_world.py             # генератор SDF + JSON стен
+│   ├── gen_world.py             # генератор SDF + JSON стен
+│   └── bringup.sh               # автоматический запуск драйверов и моста
 ├── web/                         # Canvas
 │   ├── index.html
 │   └── favicon.svg
@@ -359,7 +363,14 @@ MAP=simple docker compose up -d gazebo
 Если робот не может двигаться более 2 секунд при активной миссии, оркестратор помечает его как застрявшего и блокирует соответствующую зону графа. Дальнейшие попытки проезда через заблокированную зону запрещены.
 
 ### Режим "Тёмный цех"
-Кнопка "Тёмный цех" в веб-интерфейсе включает автоматическую выдачу приказов роботов на случайные дальние точки. Роботы постоянно находятся в движении для стресс-тестирования оркестратора.
+
+Режим "Тёмный цех" — стресс-тест orchestration, блокировок и устойчивости к потере связи. При включении фоновый цикл оркестратора (`monitor_tasks` → `do_dark_shop()`) каждые `DARK_SHOP_INTERVAL` (3 с) выбирает одного простаивающего робота и шлёт ему приказ на случайную далёкую цель.
+
+**Как включается.** Кнопка «Тёмный цех» в веб-интерфейсе (`web/index.html`) переключает флаг `dark_shop` через WebSocket (`dark_shop` / `dark_shop_status`). Клиент только переключает флаг; вся генерация приказов реализована на бэкенде.
+
+**Что происходит под капотом.** Оркестратор берёт только активных роботов (`is_active`), без статуса `error`, со статусом `idle`/`done` и временем последней обновления меньше `CONNECTION_TIMEOUT`. Для такого робота выбирается случайная цель из парковочных и всех узлов (кроме текущего), вычисляется путь через `PATHFINDER.find_path(cur, target, LOCKS, rid)` с учётом блокировок, и если путь валиден (`len > 2`), назначается миссия (`status: moving`, непустой `mission`) и отправляется через `NODE.send_order`. Один робот за тик.
+
+**Ограничения.** Приказы шлются только активным и подключённым роботам; застрявшие, неактивные и отключённые роботы не получают приказов. При выключении режима новые приказы перестают приходить.
 
 ### Обработка потери связи
 При отсутствии обновлений от робота дольше 2.5 секунд оркестратор помечает его как `disconnected`. Приказы и команды для отключившегося робота блокируются.
