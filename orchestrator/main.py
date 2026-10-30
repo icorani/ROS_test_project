@@ -53,8 +53,17 @@ def find_path(start: str, goal: str, blocked_nodes=None, blocked_edges=None, rob
         blocked_nodes = set()
     if blocked_edges is None:
         blocked_edges = set()
+    now = time.time()
+    # Clean expired reservations
+    expired = [k for k, v in path_reservations.items() if v["expires"] < now]
+    for k in expired:
+        del path_reservations[k]
     # Goal cannot be blocked (except by the requesting robot itself)
     if goal in blocked_nodes and blocked_nodes_owner.get(goal) != robot_id:
+        return None
+    # Goal cannot be reserved by another robot
+    goal_res_key = f"node:{goal}"
+    if goal_res_key in path_reservations and path_reservations[goal_res_key]["robot_id"] != robot_id:
         return None
     dist = {start: 0.0}
     prev = {}
@@ -68,11 +77,20 @@ def find_path(start: str, goal: str, blocked_nodes=None, blocked_edges=None, rob
         # Don't expand from blocked intermediate nodes (but start may be blocked)
         if u != start and u in blocked_nodes and blocked_nodes_owner.get(u) != robot_id:
             continue
+        u_res_key = f"node:{u}"
+        if u != start and u_res_key in path_reservations and path_reservations[u_res_key]["robot_id"] != robot_id:
+            continue
         for v in ADJ.get(u, []):
             if v in blocked_nodes and blocked_nodes_owner.get(v) != robot_id:
                 continue
+            v_res_key = f"node:{v}"
+            if v_res_key in path_reservations and path_reservations[v_res_key]["robot_id"] != robot_id:
+                continue
             edge_key = tuple(sorted((u, v)))
             if edge_key in blocked_edges and blocked_edges_owner.get(edge_key) != robot_id:
+                continue
+            e_res_key = f"edge:{edge_key[0]},{edge_key[1]}"
+            if e_res_key in path_reservations and path_reservations[e_res_key]["robot_id"] != robot_id:
                 continue
             w = math.dist((POS[u]["x"], POS[u]["y"]), (POS[v]["x"], POS[v]["y"]))
             nd = d + w
@@ -89,6 +107,30 @@ def find_path(start: str, goal: str, blocked_nodes=None, blocked_edges=None, rob
         cur = prev[cur]
     path.append(start)
     return list(reversed(path))
+
+
+def reserve_path(robot_id: str, path: list[str]):
+    """Reserve all nodes and edges on the path for the robot."""
+    now = time.time()
+    expires = now + RESERVATION_TTL
+    # Reserve nodes
+    for node in path:
+        key = f"node:{node}"
+        path_reservations[key] = {"robot_id": robot_id, "expires": expires}
+    # Reserve edges
+    for i in range(len(path) - 1):
+        a, b = path[i], path[i + 1]
+        edge_key = tuple(sorted((a, b)))
+        rkey = f"edge:{edge_key[0]},{edge_key[1]}"
+        path_reservations[rkey] = {"robot_id": robot_id, "expires": expires}
+
+
+def release_reservations(robot_id: str):
+    """Release all path reservations for a robot."""
+    keys_to_remove = [k for k, v in path_reservations.items() if v["robot_id"] == robot_id]
+    for k in keys_to_remove:
+        del path_reservations[k]
+
 
 def nearest_node(x, y):
     return min(POS.keys(), key=lambda n: math.dist((POS[n]["x"], POS[n]["y"]), (x, y)))
@@ -116,15 +158,15 @@ for rid, rcfg in ROBOTS_CFG.items():
     }
 
 # ── Блокировки ────────────────────────────────────────
-node_reservations = {}  # node -> {robot_id, expires}
-edge_reservations = {}  # (a,b) sorted -> {robot_id, expires}
 blocked_nodes = set()  # permanently blocked (stuck robot)
 blocked_edges = set()
 stuck_robots = set()  # robots marked as stuck/unrecoverable
-robot_blocked_nodes = {}  # robot_id -> set of nodes it blocked
-robot_blocked_edges = {}  # robot_id -> set of edges it blocked
+robot_blocked_nodes = {}  # robot_id -> set of nodes it blocked (stuck)
+robot_blocked_edges = {}  # robot_id -> set of edges it blocked (stuck)
 blocked_nodes_owner = {}  # node -> robot_id that blocked it
 blocked_edges_owner = {}  # edge -> robot_id that blocked it
+path_reservations = {}  # key ("node:C1" or "edge:C1,B2") -> {robot_id, expires}
+RESERVATION_TTL = 15.0  # seconds
 
 # ── Dark shop (Тёмный цех) ────────────────────────────
 dark_shop_enabled = False
@@ -226,6 +268,9 @@ class OrchestratorNode(Node):
                         blocked_nodes.discard(n)
                     for e in robot_blocked_edges.pop(rid, []):
                         blocked_edges.discard(e)
+                # Release path reservations when mission completes
+                if robots[rid]["status"] in ["done", "idle"] and prev.get("status") == "moving":
+                    release_reservations(rid)
                 else:
                     robots[rid]["stuck_count"] = 0
                     robots[rid]["stuck_since"] = None
@@ -286,13 +331,12 @@ async def monitor_tasks():
                     if r.get("status") != "disconnected":
                         r["status"] = "disconnected"
                         r["error"] = "connection_lost"
-            # Clean expired reservations
-            expired_nodes = [n for n, res in node_reservations.items() if res["expires"] < now]
-            for n in expired_nodes:
-                del node_reservations[n]
-            expired_edges = [e for e, res in edge_reservations.items() if res["expires"] < now]
-            for e in expired_edges:
-                del edge_reservations[e]
+                    # Release path reservations on disconnect
+                    release_reservations(rid)
+            # Clean expired path reservations
+            expired_keys = [k for k, v in path_reservations.items() if v["expires"] < now]
+            for k in expired_keys:
+                del path_reservations[k]
             # Dark shop
             if dark_shop_enabled and now - last_dark_shop > DARK_SHOP_INTERVAL:
                 await do_dark_shop()
@@ -320,6 +364,7 @@ async def do_dark_shop():
                 r["mission"] = path
                 r["status"] = "moving"
                 r["target"] = target
+                reserve_path(rid, path)
                 node.send_order(rid, path)
                 break  # Send to one robot at a time
 
@@ -328,17 +373,19 @@ async def ws_endpoint(ws: WebSocket):
     global dark_shop_enabled
     await ws.accept()
     await ws.send_text(json.dumps({"type": "map", "data": {
-            "name": CFG["name"],
-            "bounds": BOUNDS,
-            "nodes": POS,
-            "edges": EDGES,
-            "robots": ROBOTS_CFG,
-            "walls": WALLS_JSON,
-            "blocked_nodes": list(blocked_nodes),
-            "blocked_edges": [list(e) for e in blocked_edges],
-            "dark_shop": dark_shop_enabled,
-            "stuck_robots": list(stuck_robots),
-        }}))
+                    "name": CFG["name"],
+                    "bounds": BOUNDS,
+                    "nodes": POS,
+                    "edges": EDGES,
+                    "robots": ROBOTS_CFG,
+                    "walls": WALLS_JSON,
+                    "blocked_nodes": list(blocked_nodes),
+                    "blocked_edges": [list(e) for e in blocked_edges],
+                    "dark_shop": dark_shop_enabled,
+                    "stuck_robots": list(stuck_robots),
+                    "reserved_nodes": {k[5:]: v["robot_id"] for k, v in path_reservations.items() if k.startswith("node:")},
+                    "reserved_edges": {k[5:]: v["robot_id"] for k, v in path_reservations.items() if k.startswith("edge:")},
+                }}))
     try:
         while True:
             try:
@@ -356,6 +403,7 @@ async def ws_endpoint(ws: WebSocket):
                         if path:
                             robots[rid]["mission"] = path
                             robots[rid]["status"] = "moving"
+                            reserve_path(rid, path)
                             node.send_order(rid, path)
                     else:
                         robots[rid]["status"] = "idle"
@@ -376,6 +424,8 @@ async def ws_endpoint(ws: WebSocket):
                 "blocked_edges": [list(e) for e in blocked_edges],
                 "dark_shop": dark_shop_enabled,
                 "stuck_robots": list(stuck_robots),
+                "reserved_nodes": {k[5:]: v["robot_id"] for k, v in path_reservations.items() if k.startswith("node:")},
+                "reserved_edges": {k[5:]: v["robot_id"] for k, v in path_reservations.items() if k.startswith("edge:")},
             }))
             await asyncio.sleep(0.05)
     except WebSocketDisconnect:
@@ -412,6 +462,8 @@ async def order(payload: dict):
     robots[rid]["mission"] = path
     robots[rid]["status"] = "moving"
     robots[rid]["target"] = target
+    release_reservations(rid)
+    reserve_path(rid, path)
     node.send_order(rid, path)
     return {"ok": True, "path": path}
 

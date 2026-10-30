@@ -22,6 +22,8 @@ let manualRobotId = null;
 let keys = {w: false, a: false, s: false, d: false};
 let blockedNodes = new Set();
 let blockedEdges = new Set();
+let reservedNodes = new Set();
+let reservedEdges = new Set();
 let darkShopEnabled = false;
 let stuckRobots = new Set();
 
@@ -118,8 +120,18 @@ function drawGraph() {
         const edgeKey = [a,b].sort().join(',');
         const isBlocked = blockedEdges.has(edgeKey) || 
             Array.from(blockedEdges).some(e => (e[0]===a&&e[1]===b)||(e[0]===b&&e[1]===a));
-        ctx.strokeStyle = isBlocked ? '#f44' : '#3a5a7a';
-        ctx.setLineDash(isBlocked ? [5, 5] : []);
+        const isReserved = reservedEdges.has(edgeKey) || 
+            Array.from(reservedEdges).some(e => (e[0]===a&&e[1]===b)||(e[0]===b&&e[1]===a));
+        if (isBlocked) {
+            ctx.strokeStyle = '#f44';
+            ctx.setLineDash([5, 5]);
+        } else if (isReserved) {
+            ctx.strokeStyle = '#ffa500';
+            ctx.setLineDash([3, 3]);
+        } else {
+            ctx.strokeStyle = '#3a5a7a';
+            ctx.setLineDash([]);
+        }
         const [x1, y1] = toPx(nodes[a].x, nodes[a].y);
         const [x2, y2] = toPx(nodes[b].x, nodes[b].y);
         ctx.beginPath();
@@ -134,8 +146,11 @@ function drawGraph() {
         const [px, py] = toPx(n.x, n.y);
         const isParking = id.startsWith('P');
         const isBlocked = blockedNodes.has(id);
+        const isReserved = reservedNodes.has(id);
         if (isBlocked) {
             ctx.fillStyle = '#f44';
+        } else if (isReserved) {
+            ctx.fillStyle = '#ffa500';
         } else if (isParking) {
             ctx.fillStyle = '#a3e';
         } else {
@@ -147,6 +162,10 @@ function drawGraph() {
         if (isBlocked) {
             ctx.strokeStyle = '#fff';
             ctx.lineWidth = 2;
+            ctx.stroke();
+        } else if (isReserved) {
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 1;
             ctx.stroke();
         }
         ctx.fillStyle = '#888';
@@ -306,6 +325,8 @@ function connect() {
                 mapData = msg.data;
                 blockedNodes = new Set(msg.data.blocked_nodes || []);
                 blockedEdges = new Set((msg.data.blocked_edges || []).map(e => e.sort().join(',')));
+                reservedNodes = new Set(Object.keys(msg.data.reserved_nodes || {}));
+                reservedEdges = new Set(Object.keys(msg.data.reserved_edges || {}));
                 darkShopEnabled = msg.data.dark_shop || false;
                 stuckRobots = new Set(msg.data.stuck_robots || []);
                 updateDarkShopBtn();
@@ -316,6 +337,8 @@ function connect() {
                 robots = msg.robots || [];
                 blockedNodes = new Set(msg.blocked_nodes || []);
                 blockedEdges = new Set((msg.blocked_edges || []).map(e => e.sort().join(',')));
+                reservedNodes = new Set(Object.keys(msg.reserved_nodes || {}));
+                reservedEdges = new Set(Object.keys(msg.reserved_edges || {}));
                 darkShopEnabled = msg.dark_shop || false;
                 stuckRobots = new Set(msg.stuck_robots || []);
                 updateDarkShopBtn();
