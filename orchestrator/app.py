@@ -233,6 +233,16 @@ def on_state(rid: str, state: dict) -> None:
             LOCKS.lock_node(cur, rid, reason="occupied")
         return
 
+    # Восстановление после завершения (если драйвер сообщил done, но mission ещё не очищен)
+    if r.status == "done":
+        # Убеждаемся, что final node занят, чтобы другие не приехали
+        release_all_for_robot(rid)
+        r.error = None
+        cur = nearest_node(r.x, r.y)
+        if node_dist(r.x, r.y, cur) < NODE_ARRIVAL_THRESHOLD:
+            LOCKS.lock_node(cur, rid, reason="occupied")
+        return
+
     # Движение: reconciliate блокировки
     if r.status == "moving" and r.mission:
         _reconcile_movement(rid, r, now)
@@ -274,6 +284,10 @@ def _reconcile_movement(rid: str, r: RobotState, now: float) -> None:
     # Миссия завершена: доехали до последнего узла и стоим на нём
     if idx >= len(mission) - 1 and at_node and nearest == mission[-1]:
         release_all_for_robot(rid)
+        # Ре-lock узел, где робот стоит, чтобы другие не приехали
+        cur = nearest_node(r.x, r.y)
+        if node_dist(r.x, r.y, cur) < NODE_ARRIVAL_THRESHOLD:
+            LOCKS.lock_node(cur, rid, reason="occupied")
         r.status = "done"
         r.mission = []
         r.mission_idx = 0
@@ -291,6 +305,7 @@ def _reconcile_movement(rid: str, r: RobotState, now: float) -> None:
         if ok:
             ctx["waiting"] = False
             ctx["wait_since"] = None
+            NODE.send_order(rid, r.mission)
         else:
             # Сразу пробуем перестроить маршрут (не ждём WAIT_TIMEOUT)
             new_path = PATHFINDER.find_path(seg_cur, r.target or seg_nxt, LOCKS, rid)
@@ -299,6 +314,8 @@ def _reconcile_movement(rid: str, r: RobotState, now: float) -> None:
                 ctx = MOVEMENT_CTX.get(rid, ctx)
             else:
                 ctx["wait_since"] = ctx.get("wait_since") or now
+                # Останавливаем робота, пока ресурс занят
+                NODE.send_cmd(rid, 0.0, 0.0)
         MOVEMENT_CTX[rid] = ctx
         return
 
@@ -324,6 +341,9 @@ def _reconcile_movement(rid: str, r: RobotState, now: float) -> None:
     elif at_node:
         # На узле: узел + ребро к следующему + целевой узел
         ok = _acquire_segment_locks(rid, seg_cur, seg_nxt, lock_cur_node=True)
+        if not ok:
+            # Не смогли заблокировать сегмент — хотя бы узел где стоим
+            LOCKS.lock_node(seg_cur, rid, reason="node")
     else:
         # На ребре: узел отправления уже освобождён, только ребро + целевой узел
         ok = _acquire_segment_locks(rid, seg_cur, seg_nxt, lock_cur_node=False)
@@ -337,6 +357,7 @@ def _reconcile_movement(rid: str, r: RobotState, now: float) -> None:
             ctx["waiting"] = True
             ctx["wait_since"] = now
             MOVEMENT_CTX[rid] = ctx
+            NODE.send_cmd(rid, 0.0, 0.0)
 
 
 def _acquire_segment_locks(rid: str, frm: str, to: str, lock_cur_node: bool = True) -> bool:
@@ -361,7 +382,7 @@ def _acquire_segment_locks(rid: str, frm: str, to: str, lock_cur_node: bool = Tr
 
 
 def _adopt_path(rid: str, r: RobotState, path: list[str]) -> None:
-    # Путь из одного узла — движения нет, считаем выполненным
+    # Путь из одного узла — движений нет, считаем выполненным
     if len(path) <= 1:
         release_all_for_robot(rid)
         r.status = "done"
@@ -433,7 +454,7 @@ async def order(payload: dict):
         return {"ok": False, "error": "connection_lost"}
 
     if start is None:
-        if r.mission:
+        if r.mission and r.mission_idx < len(r.mission):
             start = r.mission[min(r.mission_idx, len(r.mission) - 1)]
         else:
             start = nearest_node(r.x, r.y)
